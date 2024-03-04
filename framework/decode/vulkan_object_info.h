@@ -476,6 +476,7 @@ struct DescriptorUpdateTemplateInfo : public VulkanObjectInfo<VkDescriptorUpdate
 {
     std::vector<VkDescriptorType>                descriptor_image_types;
     std::vector<VkDescriptorUpdateTemplateEntry> entries;
+    VkDescriptorUpdateTemplateEntryKHR           acceleration_structure_template_entry;
 };
 
 struct DisplayKHRInfo : public VulkanObjectInfo<VkDisplayKHR>

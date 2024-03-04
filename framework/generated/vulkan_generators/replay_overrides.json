@@ -24,13 +24,10 @@
     "vkQueueSubmit2": "OverrideQueueSubmit2",
     "vkQueueSubmit2KHR": "OverrideQueueSubmit2",
     "vkQueueBindSparse": "OverrideQueueBindSparse",
-    "vkCreateDescriptorSetLayout": "OverrideCreateDescriptorSetLayout",
     "vkCreateDescriptorPool": "OverrideCreateDescriptorPool",
     "vkDestroyDescriptorPool": "OverrideDestroyDescriptorPool",
     "vkAllocateDescriptorSets": "OverrideAllocateDescriptorSets",
     "vkAllocateCommandBuffers": "OverrideAllocateCommandBuffers",
-    "vkFreeCommandBuffers": "OverrideFreeCommandBuffers",
-    "vkDestroyCommandPool": "OverrideDestroyCommandPool",
     "vkAllocateMemory": "OverrideAllocateMemory",
     "vkMapMemory": "OverrideMapMemory",
     "vkUnmapMemory": "OverrideUnmapMemory",
@@ -52,8 +49,6 @@
     "vkCreateRenderPass2": "OverrideCreateRenderPass2",
     "vkCreateRenderPass2KHR": "OverrideCreateRenderPass2",
     "vkCmdPipelineBarrier": "OverrideCmdPipelineBarrier",
-    "vkCmdPipelineBarrier2": "OverrideCmdPipelineBarrier2",
-    "vkCmdPipelineBarrier2KHR": "OverrideCmdPipelineBarrier2KHR",
     "vkCreateShaderModule": "OverrideCreateShaderModule",
     "vkGetPipelineCacheData": "OverrideGetPipelineCacheData",
     "vkCreatePipelineCache": "OverrideCreatePipelineCache",
@@ -121,6 +116,14 @@
     "vkCreateVideoSessionKHR": "OverrideCreateVideoSessionKHR",
     "vkDestroyVideoSessionKHR": "OverrideDestroyVideoSessionKHR",
     "vkBindVideoSessionMemoryKHR": "OverrideBindVideoSessionMemoryKHR",
-    "vkCreateShadersEXT": "OverrideCreateShadersEXT"
+    "vkCreateShadersEXT": "OverrideCreateShadersEXT",
+    "vkCmdBuildAccelerationStructuresKHR": "OverrideCmdBuildAccelerationStructuresKHR",
+    "vkCmdCopyAccelerationStructureKHR" : "OverrideCmdCopyAccelerationStructureKHR",
+    "vkCmdWriteAccelerationStructuresPropertiesKHR" : "OverrideCmdWriteAccelerationStructuresPropertiesKHR",
+    "vkDestroyAccelerationStructureKHR": "OverrideDestroyAccelerationStructureKHR",
+    "vkUpdateDescriptorSets": "OverrideUpdateDescriptorSets",
+    "vkCmdCopyQueryPoolResults": "OverrideCmdCopyQueryPoolResults",
+    "vkCmdTraceRaysKHR": "OverrideCmdTraceRaysKHR",
+    "vkCreateRayTracingPipelinesKHR": "OverrideCreateRayTracingPipelinesKHR"
   }
 }

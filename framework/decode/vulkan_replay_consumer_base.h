@@ -29,6 +29,7 @@
 #include "decode/pointer_decoder.h"
 #include "decode/screenshot_handler.h"
 #include "decode/swapchain_image_tracker.h"
+#include "decode/vulkan_acceleration_structure_builder.h"
 #include "decode/vulkan_handle_mapping_util.h"
 #include "decode/vulkan_object_info.h"
 #include "decode/vulkan_object_info_table.h"
@@ -198,6 +199,16 @@ class VulkanReplayConsumerBase : public VulkanConsumer
         StructPointerDecoder<Decoded_VkRayTracingPipelineCreateInfoKHR>* pCreateInfos,
         StructPointerDecoder<Decoded_VkAllocationCallbacks>*             pAllocator,
         HandlePointerDecoder<VkPipeline>*                                pPipelines) override;
+
+    virtual void ProcessBuildVulkanAccelerationStructuresMetaCommand(
+        format::HandleId                                                           device,
+        uint32_t                                                                   info_count,
+        StructPointerDecoder<Decoded_VkAccelerationStructureBuildGeometryInfoKHR>* pInfos,
+        StructPointerDecoder<Decoded_VkAccelerationStructureBuildRangeInfoKHR*>*   ppRangeInfos,
+        std::vector<std::vector<VkAccelerationStructureInstanceKHR>>&              instance_buffers_data) override;
+
+    virtual void ProcessCopyVulkanAccelerationStructuresMetaCommand(
+        format::HandleId device, StructPointerDecoder<Decoded_VkCopyAccelerationStructureInfoKHR>* copy_infos) override;
 
     template <typename T>
     void AllowCompileDuringPipelineCreation(uint32_t create_info_count, const T* create_infos)
@@ -620,6 +631,16 @@ class VulkanReplayConsumerBase : public VulkanConsumer
                                          PointerDecoder<uint8_t>*  pData,
                                          VkDeviceSize              stride,
                                          VkQueryResultFlags        flags);
+
+    void OverrideCmdCopyQueryPoolResults(PFN_vkCmdCopyQueryPoolResults func,
+                                         const CommandBufferInfo*      command_buffer_info,
+                                         const QueryPoolInfo*          query_pool_info,
+                                         uint32_t                      firstQuery,
+                                         uint32_t                      queryCount,
+                                         BufferInfo*                   dst_buffer_info,
+                                         VkDeviceSize                  dstOffset,
+                                         VkDeviceSize                  stride,
+                                         VkQueryResultFlags            flags);
 
     VkResult OverrideQueueSubmit(PFN_vkQueueSubmit                                 func,
                                  uint64_t                                          index,
@@ -1263,6 +1284,21 @@ class VulkanReplayConsumerBase : public VulkanConsumer
                           StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator,
                           HandlePointerDecoder<VkShaderEXT>*                   pShaders);
 
+    void OverrideDestroyAccelerationStructureKHR(PFN_vkDestroyAccelerationStructureKHR func,
+                                                 const DeviceInfo*                     device_info,
+                                                 const AccelerationStructureKHRInfo*   acceleration_structure_info,
+                                                 StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator);
+
+    void
+                              OverrideCmdTraceRaysKHR(PFN_vkCmdTraceRaysKHR                                          func,
+                                                      CommandBufferInfo*                                             in_commandBuffer,
+                                                      StructPointerDecoder<Decoded_VkStridedDeviceAddressRegionKHR>* pRaygenShaderBindingTable,
+                                                      StructPointerDecoder<Decoded_VkStridedDeviceAddressRegionKHR>* pMissShaderBindingTable,
+                                                      StructPointerDecoder<Decoded_VkStridedDeviceAddressRegionKHR>* pHitShaderBindingTable,
+                                                      StructPointerDecoder<Decoded_VkStridedDeviceAddressRegionKHR>* pCallableShaderBindingTable,
+                                                      uint32_t                                                       width,
+                                                      uint32_t                                                       height,
+                                                      uint32_t                                                       depth);
     const VulkanReplayOptions options_;
 
     VulkanReplayDumpResources resource_dumper;
@@ -1476,6 +1512,10 @@ class VulkanReplayConsumerBase : public VulkanConsumer
     std::unordered_set<uint32_t>      removed_swapchain_indices_;
     std::vector<uint32_t>             capture_image_indices_;
     std::vector<SwapchainKHRInfo*>    swapchain_infos_;
+
+    // map acceleration structure builders for each device
+    std::unordered_map<format::HandleId, std::unique_ptr<VulkanAccelerationStructureBuilder>>
+        acceleration_structure_builders_;
 
   protected:
     // Used by pipeline cache handling, there are the following two cases for the flag to be set:
