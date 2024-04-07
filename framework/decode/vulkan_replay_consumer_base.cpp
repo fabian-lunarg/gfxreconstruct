@@ -2753,6 +2753,58 @@ VulkanReplayConsumerBase::OverrideCreateDevice(VkResult            original_resu
     if (!allocator->SupportsOpaqueDeviceAddresses())
     {
         VulkanAccelerationStructureBuilder::Functions as_builder_functions = {
+            .get_acceleration_structure_build_sizes       = device_table->GetAccelerationStructureBuildSizesKHR,
+            .create_acceleration_structure                = device_table->CreateAccelerationStructureKHR,
+            .get_buffer_device_address                    = device_table->GetBufferDeviceAddressKHR,
+            .cmd_build_acceleration_structures            = device_table->CmdBuildAccelerationStructuresKHR,
+            .get_acceleration_structure_device_address    = device_table->GetAccelerationStructureDeviceAddressKHR,
+            .get_buffer_memory_requirements               = device_table->GetBufferMemoryRequirements,
+            .cmd_copy_acceleration_structure              = device_table->CmdCopyAccelerationStructureKHR,
+            .cmd_write_acceleration_structures_properties = device_table->CmdWriteAccelerationStructuresPropertiesKHR,
+            .destroy_acceleration_structure               = device_table->DestroyAccelerationStructureKHR,
+            .create_command_pool                          = device_table->CreateCommandPool,
+            .destroy_command_pool                         = device_table->DestroyCommandPool,
+            .allocate_command_buffers                     = device_table->AllocateCommandBuffers,
+            .get_device_queue                             = device_table->GetDeviceQueue,
+            .begin_command_buffer                         = device_table->BeginCommandBuffer,
+            .end_command_buffer                           = device_table->EndCommandBuffer,
+            .reset_command_buffer                         = device_table->ResetCommandBuffer,
+            .queue_submit                                 = device_table->QueueSubmit,
+            .queue_wait_idle                              = device_table->QueueWaitIdle,
+            .update_descriptor_sets                       = device_table->UpdateDescriptorSets,
+            .get_query_pool_results                       = device_table->GetQueryPoolResults,
+            .cmd_copy_query_pool_results                  = device_table->CmdCopyQueryPoolResults,
+            .cmd_pipeline_barrier                         = device_table->CmdPipelineBarrier,
+        };
+
+        auto table = GetInstanceTable(physical_device);
+
+        VkPhysicalDeviceRayTracingPipelinePropertiesKHR ray_tracing_pipeline_properties{};
+        ray_tracing_pipeline_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+        VkPhysicalDeviceProperties2 device_properties{};
+        device_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        device_properties.pNext = &ray_tracing_pipeline_properties;
+        table->GetPhysicalDeviceProperties2(physical_device, &device_properties);
+
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features{};
+        acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        VkPhysicalDeviceFeatures2 device_features{};
+        device_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        device_features.pNext = &acceleration_structure_features;
+        table->GetPhysicalDeviceFeatures2(physical_device, &device_features);
+
+        acceleration_structure_builders_[*pDevice->GetPointer()] = std::make_unique<VulkanAccelerationStructureBuilder>(
+            as_builder_functions,
+            *replay_device,
+            allocator,
+            *physical_device_info->replay_device_info->memory_properties,
+            ray_tracing_pipeline_properties,
+            acceleration_structure_features);
+    }
+    const encode::DeviceTable* device_table = GetDeviceTable(*replay_device);
+    if (!allocator->SupportsOpaqueDeviceAddresses())
+    {
+        VulkanAccelerationStructureBuilder::Functions as_builder_functions = {
             .get_acceleration_structure_build_sizes    = device_table->GetAccelerationStructureBuildSizesKHR,
             .create_acceleration_structure             = device_table->CreateAccelerationStructureKHR,
             .get_buffer_device_address                 = device_table->GetBufferDeviceAddressKHR,
@@ -3543,7 +3595,7 @@ VkResult VulkanReplayConsumerBase::OverrideQueueSubmit(PFN_vkQueueSubmit func,
 
     if ((options_.sync_queue_submissions) && (result == VK_SUCCESS))
     {
-        GetDeviceTable(queue_info->handle)->QueueWaitIdle(queue_info->handle);
+        GFXRECON_ASSERT(VK_SUCCESS == GetDeviceTable(queue_info->handle)->QueueWaitIdle(queue_info->handle));
     }
 
     if (screenshot_handler_ != nullptr)
