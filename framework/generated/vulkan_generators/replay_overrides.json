@@ -121,7 +121,6 @@
     "vkCmdCopyAccelerationStructureKHR" : "OverrideCmdCopyAccelerationStructureKHR",
     "vkCmdWriteAccelerationStructuresPropertiesKHR" : "OverrideCmdWriteAccelerationStructuresPropertiesKHR",
     "vkDestroyAccelerationStructureKHR": "OverrideDestroyAccelerationStructureKHR",
-    "vkUpdateDescriptorSets": "OverrideUpdateDescriptorSets",
     "vkCmdCopyQueryPoolResults": "OverrideCmdCopyQueryPoolResults",
     "vkCmdTraceRaysKHR": "OverrideCmdTraceRaysKHR",
     "vkCreateRayTracingPipelinesKHR": "OverrideCreateRayTracingPipelinesKHR"

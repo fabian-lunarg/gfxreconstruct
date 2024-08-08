@@ -366,7 +366,7 @@ class VulkanReplayConsumerBodyGenerator(
                         dump_resource_arglist += val.name + '->GetPointer()'
                     elif val.is_pointer and self.is_struct(val.base_type) and is_dr_override:
                         dump_resource_arglist += val.name
-                    elif self.is_handle(val.base_type):
+                    elif self.is_handle(val.base_type) and is_dr_override:
                         dump_resource_arglist += 'in_' + val.name + '->handle'
                     else:
                         dump_resource_arglist += val.name

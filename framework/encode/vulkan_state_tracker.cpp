@@ -416,11 +416,8 @@ void VulkanStateTracker::TrackAccelerationStructureBuildCommand(
             // Extract command information for 1 AccelerationStructure
             (*dst_command_ptr)->device        = wrappers[i]->device_id;
             (*dst_command_ptr)->geometry_info = infos[i];
-            (*dst_command_ptr)->geometry_info_memory.Reset();
-            auto unwrapped = vulkan_trackers::MakeUnwrapStructs(
-                infos[i].pGeometries, infos[i].geometryCount, &(*dst_command_ptr)->geometry_info_memory);
-            unwrapped->pNext =
-                vulkan_trackers::TrackStruct(unwrapped->pNext, &(*dst_command_ptr)->geometry_info_memory);
+            auto unwrapped                    = vulkan_trackers::TrackStructs(
+                infos[i].pGeometries, infos[i].geometryCount, (*dst_command_ptr)->geometry_info_memory);
             (*dst_command_ptr)->geometry_info.pGeometries = unwrapped;
 
             (*dst_command_ptr)->build_range_infos.reserve(infos[i].geometryCount);
@@ -1770,7 +1767,7 @@ void VulkanStateTracker::TrackAccelerationStructureCopyCommand(VkCommandBuffer  
     wrapper->latest_copy_command->device = wrapper->device_id;
     wrapper->latest_copy_command->info   = *info;
     wrapper->latest_copy_command->info.pNext =
-        vulkan_trackers::TrackStruct(info->pNext, &wrapper->latest_copy_command->p_next_memory);
+        vulkan_trackers::TrackStruct(info->pNext, wrapper->latest_copy_command->p_next_memory);
 }
 
 GFXRECON_END_NAMESPACE(encode)

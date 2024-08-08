@@ -498,7 +498,7 @@ struct AccelerationStructureKHRWrapper : public HandleWrapper<VkAccelerationStru
     {
         format::HandleId                                      device;
         VkAccelerationStructureBuildGeometryInfoKHR           geometry_info;
-        HandleUnwrapMemory                                    geometry_info_memory;
+        std::unique_ptr<uint8_t[]>                            geometry_info_memory;
         std::vector<VkAccelerationStructureBuildRangeInfoKHR> build_range_infos;
         std::vector<VkAccelerationStructureInstanceKHR>       instance_buffer_data;
     };
@@ -509,7 +509,7 @@ struct AccelerationStructureKHRWrapper : public HandleWrapper<VkAccelerationStru
     {
         format::HandleId                   device;
         VkCopyAccelerationStructureInfoKHR info;
-        HandleUnwrapMemory                 p_next_memory;
+        std::unique_ptr<uint8_t[]>         p_next_memory;
     };
     std::unique_ptr<AccelerationStructureCopyCommandData> latest_copy_command;
 };

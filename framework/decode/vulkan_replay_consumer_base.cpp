@@ -8418,44 +8418,6 @@ void VulkanReplayConsumerBase::OverrideDestroyAccelerationStructureKHR(
     func(device_info->handle, acceleration_structure, GetAllocationCallbacks(pAllocator));
 }
 
-void VulkanReplayConsumerBase::OverrideUpdateDescriptorSets(
-    PFN_vkUpdateDescriptorSets                          func,
-    const DeviceInfo*                                   device_info,
-    uint32_t                                            descriptor_write_count,
-    StructPointerDecoder<Decoded_VkWriteDescriptorSet>* descriptor_writes_decoder,
-    uint32_t                                            descriptor_copy_count,
-    StructPointerDecoder<Decoded_VkCopyDescriptorSet>*  descriptor_copies_decoder)
-{
-    assert(device_info != nullptr);
-
-    auto allocator = device_info->allocator.get();
-    assert(allocator != nullptr);
-
-    if (descriptor_write_count > 0)
-    {
-        assert(descriptor_writes_decoder != nullptr);
-    }
-    if (descriptor_copy_count > 0)
-    {
-        assert(descriptor_copies_decoder != nullptr);
-    }
-
-    if (!allocator->SupportsOpaqueDeviceAddresses())
-    {
-        acceleration_structure_builders_[device_info->capture_id]->UpdateDescriptorSets(
-            descriptor_write_count,
-            descriptor_writes_decoder->GetPointer(),
-            descriptor_copy_count,
-            descriptor_copies_decoder->GetPointer());
-    }
-
-    func(device_info->handle,
-         descriptor_write_count,
-         descriptor_writes_decoder->GetPointer(),
-         descriptor_copy_count,
-         descriptor_copies_decoder->GetPointer());
-}
-
 // We want to allow skipping the query for tool properties because the capture layer actually adds this extension
 // and the application may end up using the query.  However, this extension may not be present for replay, so
 // we stub it out in that case.  This will generate warnings in the GfxReconstruct output, but it shouldn't result
@@ -9349,6 +9311,29 @@ void VulkanReplayConsumerBase::OverrideUpdateDescriptorSets(
     uint32_t                                            descriptor_copy_count,
     StructPointerDecoder<Decoded_VkCopyDescriptorSet>*  p_pescriptor_copies)
 {
+    assert(device_info != nullptr);
+
+    auto allocator = device_info->allocator.get();
+    assert(allocator != nullptr);
+
+    if (descriptor_write_count > 0)
+    {
+        assert(p_descriptor_writes != nullptr);
+    }
+    if (descriptor_copy_count > 0)
+    {
+        assert(p_pescriptor_copies != nullptr);
+    }
+
+    if (!allocator->SupportsOpaqueDeviceAddresses())
+    {
+        acceleration_structure_builders_[device_info->capture_id]->UpdateDescriptorSets(
+            descriptor_write_count,
+            p_descriptor_writes->GetPointer(),
+            descriptor_copy_count,
+            p_pescriptor_copies->GetPointer());
+    }
+
     const VkWriteDescriptorSet* in_pDescriptorWrites = p_descriptor_writes->GetPointer();
     const VkCopyDescriptorSet*  in_pDescriptorCopies = p_pescriptor_copies->GetPointer();
 
@@ -9953,6 +9938,7 @@ void VulkanReplayConsumerBase::OverrideCmdTraceRaysKHR(
     if (!allocator->SupportsOpaqueDeviceAddresses())
     {
         acceleration_structure_builders_[in_commandBuffer->parent_id]->OnCmdTraceRaysKHR(
+            in_commandBuffer->handle,
             pRaygenShaderBindingTable->GetPointer(),
             pMissShaderBindingTable->GetPointer(),
             pHitShaderBindingTable->GetPointer(),
