@@ -391,49 +391,6 @@ uint64_t VulkanResourcesUtil::GetImageResourceSizesOptimal(VkImage              
     return resource_size;
 }
 
-uint64_t VulkanResourcesUtil::GetImageResourceSizesLinear(VkImage                image,
-                                                          VkFormat               format,
-                                                          const VkExtent3D&      extent,
-                                                          uint32_t               mip_levels,
-                                                          uint32_t               array_layers,
-                                                          VkImageAspectFlagBits  aspect,
-                                                          std::vector<uint64_t>* subresource_offsets,
-                                                          std::vector<uint64_t>* subresource_sizes,
-                                                          bool                   all_layers_per_level)
-{
-    assert(mip_levels <= 1 + floor(log2(std::max(std::max(extent.width, extent.height), extent.depth))));
-
-    subresource_offsets->clear();
-    subresource_sizes->clear();
-
-    const double texel_size = vkuFormatTexelSizeWithAspect(format, aspect);
-    // Not expecting a fractional number from a linear image
-    assert(texel_size == static_cast<uint64_t>(texel_size));
-
-    uint64_t offset = 0;
-    for (uint32_t m = 0; m < mip_levels; ++m)
-    {
-        for (uint32_t l = 0; l < array_layers; ++l)
-        {
-            const uint32_t mip_width  = std::max(1u, (extent.width >> m));
-            const uint32_t mip_height = std::max(1u, (extent.height >> m));
-            const uint64_t stride     = mip_width * static_cast<uint64_t>(texel_size);
-            const uint64_t size       = all_layers_per_level ? stride * mip_height * array_layers : stride * mip_height;
-
-            subresource_offsets->push_back(offset);
-            subresource_sizes->push_back(size);
-            offset += size;
-
-            if (all_layers_per_level)
-            {
-                break;
-            }
-        }
-    }
-
-    return offset;
-}
-
 VkResult VulkanResourcesUtil::CreateStagingBuffer(VkDeviceSize size)
 {
     assert(size);
@@ -1050,7 +1007,7 @@ VkResult VulkanResourcesUtil::ResolveImage(VkImage           image,
                     memory_barriers[0].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
                     memory_barriers[0].srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
                     memory_barriers[0].dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
-                    memory_barriers[0].image                           = image;
+                    memory_barriers[0].image                           = *resolved_image;
                     memory_barriers[0].subresourceRange.aspectMask     = aspect_mask;
                     memory_barriers[0].subresourceRange.baseMipLevel   = 0;
                     memory_barriers[0].subresourceRange.levelCount     = 1;
@@ -1064,7 +1021,7 @@ VkResult VulkanResourcesUtil::ResolveImage(VkImage           image,
 
                         memory_barriers[1].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                         memory_barriers[1].pNext                           = nullptr;
-                        memory_barriers[1].srcAccessMask                   = 0;
+                        memory_barriers[1].srcAccessMask                   = VK_ACCESS_MEMORY_WRITE_BIT;
                         memory_barriers[1].dstAccessMask                   = VK_ACCESS_TRANSFER_READ_BIT;
                         memory_barriers[1].oldLayout                       = current_layout;
                         memory_barriers[1].newLayout                       = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -1111,16 +1068,15 @@ VkResult VulkanResourcesUtil::ResolveImage(VkImage           image,
                     device_table_.CmdResolveImage(command_buffer_,
                                                   image,
                                                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                                  image,
+                                                  *resolved_image,
                                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                                   1,
                                                   &region);
 
-                    memory_barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                    memory_barriers[0].dstAccessMask = 0;
-                    memory_barriers[0].oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
                     // Prepare the resolved image for the next staging copy.
+                    memory_barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    memory_barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                    memory_barriers[0].oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
                     memory_barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
                     if (num_barriers == 2)
@@ -1214,6 +1170,9 @@ VkResult VulkanResourcesUtil::ReadFromImageResourceStaging(VkImage              
 
     subresource_offsets.clear();
     subresource_sizes.clear();
+
+    scaled_extent.width  = std::max(scaled_extent.width * scale, 1.0f);
+    scaled_extent.height = std::max(scaled_extent.height * scale, 1.0f);
 
     resource_size = GetImageResourceSizesOptimal(image,
                                                  format,
@@ -1610,7 +1569,7 @@ VkResult VulkanResourcesUtil::BlitImage(VkImage               image,
                                         VkFormat              format,
                                         VkImageType           type,
                                         const VkExtent3D&     extent,
-                                        VkExtent3D&           scaled_extent,
+                                        const VkExtent3D&     scaled_extent,
                                         uint32_t              mip_levels,
                                         uint32_t              array_layers,
                                         VkImageAspectFlagBits aspect,
@@ -1620,7 +1579,6 @@ VkResult VulkanResourcesUtil::BlitImage(VkImage               image,
                                         VkDeviceMemory&       scaled_image_mem,
                                         bool&                 scaling_supported)
 {
-    scaled_extent    = extent;
     scaled_image     = VK_NULL_HANDLE;
     scaled_image_mem = VK_NULL_HANDLE;
     VkImageTiling tiling;
@@ -1683,9 +1641,6 @@ VkResult VulkanResourcesUtil::BlitImage(VkImage               image,
     {
         return VK_SUCCESS;
     }
-
-    scaled_extent.width  = std::max(scaled_extent.width * scale, 1.0f);
-    scaled_extent.height = std::max(scaled_extent.height * scale, 1.0f);
 
     // Create a scaled image and then blit to scaled image
     VkImageCreateInfo create_info     = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };

@@ -1162,6 +1162,11 @@ void DrawCallsDumpingContext::GenerateOutputJsonDrawCallInfo(
         {
             std::vector<std::string> filenamesBeforeAfter;
             bool                     scaling_failed;
+
+            // We don't support stencil output yet
+            if (filenamesAfter[i].find("stencil") != std::string::npos)
+                continue;
+
             if (dump_resources_before)
             {
                 filenamesBeforeAfter.resize(2);
@@ -2520,7 +2525,7 @@ void DrawCallsDumpingContext::BindDescriptorSets(VkPipelineBindPoint            
     {
         uint32_t set_index = first_set + i;
 
-        if (pipeline_bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS)
+        if (descriptor_sets_infos[i] != nullptr && pipeline_bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS)
         {
             bound_descriptor_sets_gr[set_index] = *descriptor_sets_infos[i];
 

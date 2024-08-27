@@ -195,8 +195,9 @@ VulkanReplayConsumerBase::VulkanReplayConsumerBase(std::shared_ptr<application::
     }
 
     VulkanSwapchainOptions swapchain_options;
-    swapchain_options.skip_additional_present_blts = options.virtual_swapchain_skip_blit;
-    swapchain_options.select_surface_index         = options_.surface_index;
+    swapchain_options.virtual_swapchain_skip_blit        = options_.virtual_swapchain_skip_blit;
+    swapchain_options.surface_index                      = options_.surface_index;
+    swapchain_options.offscreen_swapchain_frame_boundary = options_.offscreen_swapchain_frame_boundary;
     swapchain_->SetOptions(swapchain_options);
 
     if (options_.enable_debug_device_lost)
@@ -5640,7 +5641,7 @@ VkResult VulkanReplayConsumerBase::OverrideCreateShaderModule(
         size_t file_size = static_cast<size_t>(util::platform::FileTell(fp));
         file_code        = std::make_unique<char[]>(file_size);
         util::platform::FileSeek(fp, 0L, util::platform::FileSeekSet);
-        util::platform::FileRead(file_code.get(), sizeof(char), file_size, fp);
+        util::platform::FileRead(file_code.get(), file_size, fp);
         override_info.pCode    = (uint32_t*)file_code.get();
         override_info.codeSize = file_size;
         GFXRECON_LOG_INFO("Replacement shader found: %s", file_path.c_str());
@@ -5802,6 +5803,11 @@ VkResult VulkanReplayConsumerBase::OverrideCreatePipelineCache(
         auto& create_info = *pCreateInfo->GetPointer();
         if ((create_info.pInitialData != nullptr) && (create_info.initialDataSize != 0))
         {
+            // keep track if external synchronization is required
+            auto handle_info = reinterpret_cast<PipelineCacheInfo*>(pPipelineCache->GetConsumerData(0));
+            handle_info->requires_external_synchronization =
+                create_info.flags & VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT;
+
             // This vkCreatePipelineCache call has initial pipeline cache data, the data is valid for capture time,
             // but it might not be valid for replay time if considering platform/driver version change. So in the
             // following process, we'll try to find corresponding replay time pipeline cache data.
@@ -9269,26 +9275,24 @@ void VulkanReplayConsumerBase::OverrideDestroyPipeline(
     const StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator)
 {
     GFXRECON_ASSERT(device_info != nullptr);
-    VkDevice in_device = device_info->handle;
+    VkDevice                     in_device     = device_info->handle;
+    VkPipeline                   in_pipeline   = VK_NULL_HANDLE;
+    const VkAllocationCallbacks* in_pAllocator = GetAllocationCallbacks(pAllocator);
 
     if (pipeline_info != nullptr)
     {
-        VkPipeline in_pipeline =
-            MapHandle<PipelineInfo>(pipeline_info->capture_id, &VulkanObjectInfoTable::GetPipelineInfo);
-        const VkAllocationCallbacks* in_pAllocator = GetAllocationCallbacks(pAllocator);
+        in_pipeline = MapHandle<PipelineInfo>(pipeline_info->capture_id, &VulkanObjectInfoTable::GetPipelineInfo);
 
-        if (!IsUsedByAsyncTask(pipeline_info->capture_id))
-        {
-            func(in_device, in_pipeline, in_pAllocator);
-        }
-        else
+        if (IsUsedByAsyncTask(pipeline_info->capture_id))
         {
             // schedule deletion
             DestroyAsyncHandle(pipeline_info->capture_id, [func, in_device, in_pipeline, in_pAllocator]() {
                 func(in_device, in_pipeline, in_pAllocator);
             });
+            return;
         }
     }
+    func(in_device, in_pipeline, in_pAllocator);
 }
 
 void VulkanReplayConsumerBase::OverrideDestroyRenderPass(
@@ -9298,20 +9302,23 @@ void VulkanReplayConsumerBase::OverrideDestroyRenderPass(
     const StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator)
 {
     VkDevice                     in_device     = device_info->handle;
-    VkRenderPass                 in_renderpass = renderpass_info->handle;
+    VkRenderPass                 in_renderpass = VK_NULL_HANDLE;
     const VkAllocationCallbacks* in_pAllocator = GetAllocationCallbacks(pAllocator);
 
-    if (!IsUsedByAsyncTask(renderpass_info->capture_id))
+    if (renderpass_info != nullptr)
     {
-        func(in_device, in_renderpass, in_pAllocator);
+        in_renderpass = renderpass_info->handle;
+
+        if (IsUsedByAsyncTask(renderpass_info->capture_id))
+        {
+            // schedule deletion
+            DestroyAsyncHandle(renderpass_info->capture_id, [func, in_device, in_renderpass, in_pAllocator]() {
+                func(in_device, in_renderpass, in_pAllocator);
+            });
+            return;
+        }
     }
-    else
-    {
-        // schedule deletion
-        DestroyAsyncHandle(renderpass_info->capture_id, [func, in_device, in_renderpass, in_pAllocator]() {
-            func(in_device, in_renderpass, in_pAllocator);
-        });
-    }
+    func(in_device, in_renderpass, in_pAllocator);
 }
 
 void VulkanReplayConsumerBase::OverrideDestroyShaderModule(
@@ -9321,20 +9328,23 @@ void VulkanReplayConsumerBase::OverrideDestroyShaderModule(
     const StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator)
 {
     VkDevice                     in_device        = device_info->handle;
-    VkShaderModule               in_shader_module = shader_module_info->handle;
+    VkShaderModule               in_shader_module = VK_NULL_HANDLE;
     const VkAllocationCallbacks* in_pAllocator    = GetAllocationCallbacks(pAllocator);
 
-    if (!IsUsedByAsyncTask(shader_module_info->capture_id))
+    if (shader_module_info != nullptr)
     {
-        func(in_device, in_shader_module, in_pAllocator);
+        in_shader_module = shader_module_info->handle;
+
+        if (IsUsedByAsyncTask(shader_module_info->capture_id))
+        {
+            // schedule deletion
+            DestroyAsyncHandle(shader_module_info->capture_id, [func, in_device, in_shader_module, in_pAllocator]() {
+                func(in_device, in_shader_module, in_pAllocator);
+            });
+            return;
+        }
     }
-    else
-    {
-        // schedule deletion
-        DestroyAsyncHandle(shader_module_info->capture_id, [func, in_device, in_shader_module, in_pAllocator]() {
-            func(in_device, in_shader_module, in_pAllocator);
-        });
-    }
+    func(in_device, in_shader_module, in_pAllocator);
 }
 
 std::function<decode::handle_create_result_t<VkPipeline>()> VulkanReplayConsumerBase::AsyncCreateGraphicsPipelines(
@@ -9347,6 +9357,11 @@ std::function<decode::handle_create_result_t<VkPipeline>()> VulkanReplayConsumer
     StructPointerDecoder<Decoded_VkAllocationCallbacks>*        pAllocator,
     HandlePointerDecoder<VkPipeline>*                           pPipelines)
 {
+    // avoid async operations if an externally synchronized pipeline-cache is used
+    if (pipeline_cache_info != nullptr && pipeline_cache_info->requires_external_synchronization)
+    {
+        return {};
+    }
     const VkGraphicsPipelineCreateInfo* in_pCreateInfos = pCreateInfos->GetPointer();
     const VkAllocationCallbacks*        in_pAllocator   = GetAllocationCallbacks(pAllocator);
     VkDevice                            device_handle   = device_info->handle;
@@ -9414,6 +9429,12 @@ std::function<handle_create_result_t<VkPipeline>()> VulkanReplayConsumerBase::As
     StructPointerDecoder<Decoded_VkAllocationCallbacks>*       pAllocator,
     HandlePointerDecoder<VkPipeline>*                          pPipelines)
 {
+    // avoid async operations if an externally synchronized pipeline-cache is used
+    if (pipeline_cache_info != nullptr && pipeline_cache_info->requires_external_synchronization)
+    {
+        return {};
+    }
+
     const VkComputePipelineCreateInfo* in_pCreateInfos = pCreateInfos->GetPointer();
     const VkAllocationCallbacks*       in_pAllocator   = GetAllocationCallbacks(pAllocator);
     VkDevice                           device_handle   = device_info->handle;
