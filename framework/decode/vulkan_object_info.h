@@ -609,6 +609,7 @@ struct CommandBufferInfo : public VulkanPoolObjectInfo<VkCommandBuffer>
     bool                                                is_frame_boundary{ false };
     std::vector<format::HandleId>                       frame_buffer_ids;
     std::unordered_map<format::HandleId, VkImageLayout> image_layout_barriers;
+    format::HandleId                                    bound_pipeline_id = format::kNullHandleId;
 };
 
 struct RenderPassInfo : public VulkanObjectInfo<VkRenderPass>
