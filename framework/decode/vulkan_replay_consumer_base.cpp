@@ -8434,26 +8434,29 @@ void VulkanReplayConsumerBase::OverrideCmdTraceRaysKHR(
         address_remap(in_pHitShaderBindingTable);
         address_remap(in_pCallableShaderBindingTable);
 
+        auto bound_pipeline = GetObjectInfoTable().GetPipelineInfo(command_buffer_info->bound_pipeline_id);
+        GFXRECON_ASSERT(bound_pipeline != nullptr)
+        auto& shader_group_handles = bound_pipeline->shader_group_handle_map;
+
         // figure out if the captured group-handles are valid for replay
-        bool valid_group_handles = true;
+        bool valid_group_handles = !shader_group_handles.empty();
+        bool valid_sbt_alignment = true;
 
         const PhysicalDeviceInfo* physical_device_info =
             GetObjectInfoTable().GetPhysicalDeviceInfo(device_info->parent_id);
 
-        if (physical_device_info && physical_device_info->replay_device_info->raytracing_properties)
+        if (physical_device_info != nullptr && physical_device_info->replay_device_info->raytracing_properties)
         {
             const auto& replay_props = *physical_device_info->replay_device_info->raytracing_properties;
+
             if (physical_device_info->shaderGroupHandleSize != replay_props.shaderGroupHandleSize ||
                 physical_device_info->shaderGroupHandleAlignment != replay_props.shaderGroupHandleAlignment ||
                 physical_device_info->shaderGroupBaseAlignment != replay_props.shaderGroupBaseAlignment)
             {
-                valid_group_handles = false;
+                valid_sbt_alignment = false;
             }
         }
 
-        auto bound_pipeline = GetObjectInfoTable().GetPipelineInfo(command_buffer_info->bound_pipeline_id);
-        GFXRECON_ASSERT(bound_pipeline != nullptr)
-        auto& shader_group_handles = bound_pipeline->shader_group_handle_map;
         for (const auto& [lhs, rhs] : shader_group_handles)
         {
             if (lhs != rhs)
@@ -8463,7 +8466,7 @@ void VulkanReplayConsumerBase::OverrideCmdTraceRaysKHR(
             }
         }
 
-        if (!valid_group_handles)
+        if (!(valid_group_handles && valid_sbt_alignment))
         {
             // TODO: remove TODO/warning when issue #1526 is solved
             GFXRECON_LOG_WARNING_ONCE("OverrideCmdTraceRaysKHR: invalid shader-binding-table (size, alignment, handles")
