@@ -7726,6 +7726,7 @@ VkResult VulkanReplayConsumerBase::OverrideCreateRayTracingPipelinesKHR(
                                                          &pPipelines->GetPointer()[createInfoCount]);
     }
 
+    // NOTE: this is basically never true and does not look like it's going to change soon
     if (device_info->property_feature_info.feature_rayTracingPipelineShaderGroupHandleCaptureReplay)
     {
         // Modify pipeline create infos with capture replay flag and data.
@@ -7841,10 +7842,6 @@ VkResult VulkanReplayConsumerBase::OverrideCreateRayTracingPipelinesKHR(
     }
     else
     {
-        GFXRECON_LOG_ERROR_ONCE("The replay used vkCreateRayTracingPipelinesKHR, which may require the "
-                                "rayTracingPipelineShaderGroupHandleCaptureReplay feature for accurate capture and "
-                                "replay. The replay device does not support this feature, so replay may fail.");
-
         if (omitted_pipeline_cache_data_)
         {
             AllowCompileDuringPipelineCreation(createInfoCount,
@@ -8472,6 +8469,8 @@ void VulkanReplayConsumerBase::OverrideCmdTraceRaysKHR(
         {
             // TODO: remove TODO/warning when issue #1526 is solved
             GFXRECON_LOG_WARNING_ONCE("OverrideCmdTraceRaysKHR: invalid shader-binding-table (size, alignment, handles")
+
+            // TODO: run Repl8cer! (create linear hashmap, run compute-shader, profit)
         }
 
         func(commandBuffer,
