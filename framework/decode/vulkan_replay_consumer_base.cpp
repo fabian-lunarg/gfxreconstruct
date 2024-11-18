@@ -8401,6 +8401,31 @@ void VulkanReplayConsumerBase::OverrideCmdBindPipeline(PFN_vkCmdBindPipeline    
     func(command_buffer, pipelineBindPoint, pipeline);
 }
 
+void VulkanReplayConsumerBase::OverrideCmdPushConstants(PFN_vkCmdPushConstants              func,
+                                                        VulkanCommandBufferInfo*            command_buffer_info,
+                                                        VulkanObjectInfo<VkPipelineLayout>* pipeline_layout_info,
+                                                        VkShaderStageFlags                  stage_flags,
+                                                        uint32_t                            offset,
+                                                        uint32_t                            size,
+                                                        const void*                         data)
+{
+    VkCommandBuffer  command_buffer  = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+
+    if (command_buffer_info != nullptr && pipeline_layout_info != nullptr)
+    {
+        command_buffer  = command_buffer_info->handle;
+        pipeline_layout = pipeline_layout_info->handle;
+
+        // keep track of current push-constants
+        command_buffer_info->push_constant_stage_flags     = stage_flags;
+        command_buffer_info->push_constant_pipeline_layout = pipeline_layout;
+        command_buffer_info->push_constant_data.resize(offset + size, 0);
+        memcpy(command_buffer_info->push_constant_data.data() + offset, data, size);
+    }
+    func(command_buffer, pipeline_layout, stage_flags, offset, size, data);
+}
+
 void VulkanReplayConsumerBase::OverrideCmdBeginRenderPass(
     PFN_vkCmdBeginRenderPass                             func,
     VulkanCommandBufferInfo*                             command_buffer_info,

@@ -280,23 +280,35 @@ void VulkanAddressReplacer::ProcessCmdTraceRays(
             replacer_params.input_handles = replacer_params.output_handles = input_handle_buffer_.device_address_;
             replacer_params.num_handles                                    = group_handle_map.size();
 
-            device_table_->CmdBindPipeline(command_buffer_info->handle, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
-            device_table_->CmdPushConstants(command_buffer_info->handle,
-                                            pipeline_layout_,
-                                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                            0,
-                                            sizeof(replacer_params_t),
-                                            &replacer_params);
-            // run a single workgroup
-            constexpr uint32_t wg_size = 32;
-            device_table_->CmdDispatch(command_buffer_info->handle, div_up(replacer_params.num_handles, wg_size), 1, 1);
+//            device_table_->CmdBindPipeline(command_buffer_info->handle, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
 
-            auto pipeline_info = object_table_->GetVkPipelineInfo(command_buffer_info->bound_pipeline_id);
-            assert(pipeline_info);
-            device_table_->CmdBindPipeline(
-                command_buffer_info->handle, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline_info->handle);
+//            // TODO: using push-constant might not work, need to re-establish previous data :(
+//            device_table_->CmdPushConstants(command_buffer_info->handle,
+//                                            pipeline_layout_,
+//                                            VK_SHADER_STAGE_COMPUTE_BIT,
+//                                            0,
+//                                            sizeof(replacer_params_t),
+//                                            &replacer_params);
+//            // run a single workgroup
+//            constexpr uint32_t wg_size = 32;
+//            device_table_->CmdDispatch(command_buffer_info->handle, div_up(replacer_params.num_handles, wg_size), 1, 1);
 
             // TODO: memory-barrier
+
+            // set previous push-constant data
+//            device_table_->CmdPushConstants(command_buffer_info->handle,
+//                                            command_buffer_info->push_constant_pipeline_layout,
+//                                            VK_SHADER_STAGE_RAYGEN_BIT_KHR,//command_buffer_info->push_constant_stage_flags,
+//                                            0,
+//                                            command_buffer_info->push_constant_data.size(),
+//                                            command_buffer_info->push_constant_data.data());
+
+            // TODO: is this required or not?
+            //            auto pipeline_info = object_table_->GetVkPipelineInfo(command_buffer_info->bound_pipeline_id);
+            //            assert(pipeline_info);
+            //            device_table_->CmdBindPipeline(
+            //                command_buffer_info->handle, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+            //                pipeline_info->handle);
         }
         else
         {
