@@ -2125,7 +2125,7 @@ void VulkanStateWriter::ProcessBufferMemory(const vulkan_wrappers::DeviceWrapper
                 bytes = reinterpret_cast<const uint8_t*>(memory_wrapper->mapped_data) + buffer_wrapper->bind_offset;
             }
 
-            if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties))
+            if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties_))
             {
                 InvalidateMappedMemoryRange(
                     device_wrapper, memory_wrapper->handle, buffer_wrapper->bind_offset, buffer_wrapper->size);
@@ -2239,7 +2239,7 @@ void VulkanStateWriter::ProcessBufferMemoryWithAssetFile(const vulkan_wrappers::
                     bytes = reinterpret_cast<const uint8_t*>(memory_wrapper->mapped_data) + buffer_wrapper->bind_offset;
                 }
 
-                if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties))
+                if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties_))
                 {
                     InvalidateMappedMemoryRange(
                         device_wrapper, memory_wrapper->handle, buffer_wrapper->bind_offset, buffer_wrapper->size);
@@ -2387,7 +2387,7 @@ void VulkanStateWriter::ProcessImageMemory(const vulkan_wrappers::DeviceWrapper*
                 bytes = reinterpret_cast<const uint8_t*>(memory_wrapper->mapped_data) + image_wrapper->bind_offset;
             }
 
-            if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties))
+            if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties_))
             {
                 InvalidateMappedMemoryRange(
                     device_wrapper, memory_wrapper->handle, image_wrapper->bind_offset, snapshot_entry.resource_size);
@@ -2543,7 +2543,7 @@ void VulkanStateWriter::ProcessImageMemoryWithAssetFile(const vulkan_wrappers::D
                     bytes = reinterpret_cast<const uint8_t*>(memory_wrapper->mapped_data) + image_wrapper->bind_offset;
                 }
 
-                if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties))
+                if ((result == VK_SUCCESS) && !IsMemoryCoherent(snapshot_entry.memory_properties_))
                 {
                     InvalidateMappedMemoryRange(device_wrapper,
                                                 memory_wrapper->handle,
