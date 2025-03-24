@@ -33,7 +33,7 @@
 #define VK_HANDLE_TO_UINT64(value) reinterpret_cast<uint64_t>(value)
 #define UINT64_TO_VK_HANDLE(handle_type, value) reinterpret_cast<handle_type>(value)
 #else
-#define VK_HANDLE_TO_UINT64(value) (value)
+#define VK_HANDLE_TO_UINT64(value) static_cast<uint64_t>(value)
 #define UINT64_TO_VK_HANDLE(handle_type, value) static_cast<handle_type>(value)
 #endif
 
