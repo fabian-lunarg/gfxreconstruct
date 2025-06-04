@@ -130,7 +130,7 @@ class VulkanResourceInitializer
 
     VkResult BeginCommandBuffer(uint32_t queue_family_index, VkCommandBuffer* command_buffer_p = nullptr);
 
-    VkResult ExecuteCommandBuffer(VkQueue queue, VkCommandBuffer command_buffer);
+    VkResult ExecuteCommandBuffer(VkQueue queue, VkCommandBuffer command_buffer, VkFence fence);
 
     VkImageAspectFlags
     GetImageTransitionAspect(VkFormat format, VkImageAspectFlagBits aspect, VkImageLayout* old_layout);
@@ -169,20 +169,21 @@ class VulkanResourceInitializer
     VkResult FlushRemainingResourcesInit();
 
   private:
-    struct CommandExecObjects
+    struct CommandBufferAsset
     {
-        VkQueue         queue;
-        VkCommandPool   command_pool;
-        VkCommandBuffer command_buffer;
-        bool            recording;
+        VkQueue         queue          = VK_NULL_HANDLE;
+        VkCommandPool   command_pool   = VK_NULL_HANDLE;
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        VkFence         fence          = VK_NULL_HANDLE;
+        bool            recording      = false;
     };
 
     // Map queue family index to command pool, command buffer, and queue objects for command processing.
-    typedef std::unordered_map<uint32_t, CommandExecObjects> CommandExecObjectMap;
+    typedef std::unordered_map<uint32_t, CommandBufferAsset> CommandExecObjectMap;
 
   private:
     VkDevice                              device_;
-    CommandExecObjectMap                  command_exec_objects_;
+    CommandExecObjectMap                  command_buffer_assets_;
     VkDeviceMemory                        staging_memory_;
     VulkanResourceAllocator::MemoryData   staging_memory_data_;
     VkBuffer                              staging_buffer_;

@@ -72,12 +72,12 @@ VulkanResourceInitializer::VulkanResourceInitializer(const VulkanDeviceInfo*    
                                                      bool                                    have_shader_stencil_write,
                                                      VulkanResourceAllocator*                resource_allocator,
                                                      const graphics::VulkanDeviceTable*      device_table) :
-    device_(device_info->handle),
-    staging_memory_(VK_NULL_HANDLE), staging_memory_data_(0), staging_buffer_(VK_NULL_HANDLE), staging_buffer_data_(0),
-    staging_buffer_mapped_ptr_(nullptr), staging_buffer_offset_(0), draw_sampler_(VK_NULL_HANDLE),
-    draw_pool_(VK_NULL_HANDLE), draw_set_layout_(VK_NULL_HANDLE), draw_set_(VK_NULL_HANDLE),
-    max_copy_size_(max_copy_size), have_shader_stencil_write_(have_shader_stencil_write),
-    resource_allocator_(resource_allocator), device_table_(device_table), device_info_(device_info)
+    device_(device_info->handle), staging_memory_(VK_NULL_HANDLE), staging_memory_data_(0),
+    staging_buffer_(VK_NULL_HANDLE), staging_buffer_data_(0), staging_buffer_mapped_ptr_(nullptr),
+    staging_buffer_offset_(0), draw_sampler_(VK_NULL_HANDLE), draw_pool_(VK_NULL_HANDLE),
+    draw_set_layout_(VK_NULL_HANDLE), draw_set_(VK_NULL_HANDLE), max_copy_size_(max_copy_size),
+    have_shader_stencil_write_(have_shader_stencil_write), resource_allocator_(resource_allocator),
+    device_table_(device_table), device_info_(device_info)
 {
     assert((device_info != nullptr) && (device_info->handle != VK_NULL_HANDLE) &&
            (memory_properties.memoryTypeCount > 0) && (memory_properties.memoryHeapCount > 0) &&
@@ -98,8 +98,10 @@ VulkanResourceInitializer::~VulkanResourceInitializer()
     FlushRemainingResourcesInit();
     ReleaseStagingBuffer();
 
-    for (const auto& entry : command_exec_objects_)
+    for (const auto& entry : command_buffer_assets_)
     {
+        device_table_->FreeCommandBuffers(device_, entry.second.command_pool, 1, &entry.second.command_buffer);
+        device_table_->DestroyFence(device_, entry.second.fence, nullptr);
         device_table_->DestroyCommandPool(device_, entry.second.command_pool, nullptr);
     }
 
@@ -376,9 +378,9 @@ VkResult VulkanResourceInitializer::GetCommandExecObjects(uint32_t queue_family_
     assert(command_buffer != nullptr);
 
     VkResult result = VK_SUCCESS;
-    auto     iter   = command_exec_objects_.find(queue_family_index);
+    auto     iter   = command_buffer_assets_.find(queue_family_index);
 
-    if (iter != command_exec_objects_.end())
+    if (iter != command_buffer_assets_.end())
     {
         (*command_buffer) = iter->second.command_buffer;
     }
@@ -400,14 +402,21 @@ VkResult VulkanResourceInitializer::GetCommandExecObjects(uint32_t queue_family_
             alloc_info.commandPool                 = command_pool;
             alloc_info.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             alloc_info.commandBufferCount          = 1;
-
             result = device_table_->AllocateCommandBuffers(device_, &alloc_info, command_buffer);
+            GFXRECON_ASSERT(result == VK_SUCCESS);
+
+            VkFence           fence             = VK_NULL_HANDLE;
+            VkFenceCreateInfo fence_create_info = {};
+            fence_create_info.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            fence_create_info.pNext             = nullptr;
+            fence_create_info.flags             = 0;
+            device_table_->CreateFence(device_, &fence_create_info, nullptr, &fence);
 
             if (result == VK_SUCCESS)
             {
-                VkQueue queue = GetDeviceQueue(device_table_, device_info_, queue_family_index, 0);
-                command_exec_objects_.emplace(queue_family_index,
-                                              CommandExecObjects{ queue, command_pool, *command_buffer, false });
+                VkQueue            queue     = GetDeviceQueue(device_table_, device_info_, queue_family_index, 0);
+                CommandBufferAsset cmd_asset = { queue, command_pool, *command_buffer, fence, false };
+                command_buffer_assets_.emplace(queue_family_index, cmd_asset);
             }
             else
             {
@@ -1133,9 +1142,9 @@ VkResult VulkanResourceInitializer::BeginCommandBuffer(uint32_t queue_family_ind
         *command_buffer_p = command_buffer;
     }
 
-    auto iter = command_exec_objects_.find(queue_family_index);
-    GFXRECON_ASSERT(iter != command_exec_objects_.end());
-    if (iter != command_exec_objects_.end() && !iter->second.recording)
+    auto iter = command_buffer_assets_.find(queue_family_index);
+    GFXRECON_ASSERT(iter != command_buffer_assets_.end());
+    if (iter != command_buffer_assets_.end() && !iter->second.recording)
     {
         VkCommandBufferBeginInfo begin_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         begin_info.pNext                    = nullptr;
@@ -1152,7 +1161,7 @@ VkResult VulkanResourceInitializer::BeginCommandBuffer(uint32_t queue_family_ind
     return result;
 }
 
-VkResult VulkanResourceInitializer::ExecuteCommandBuffer(VkQueue queue, VkCommandBuffer command_buffer)
+VkResult VulkanResourceInitializer::ExecuteCommandBuffer(VkQueue queue, VkCommandBuffer command_buffer, VkFence fence)
 {
     VkSubmitInfo submit_info         = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
     submit_info.pNext                = nullptr;
@@ -1164,13 +1173,9 @@ VkResult VulkanResourceInitializer::ExecuteCommandBuffer(VkQueue queue, VkComman
     submit_info.signalSemaphoreCount = 0;
     submit_info.pSignalSemaphores    = nullptr;
 
-    VkResult result = device_table_->QueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE);
-
-    if (result == VK_SUCCESS)
-    {
-        result = device_table_->QueueWaitIdle(queue);
-    }
-
+    VkResult result = device_table_->QueueSubmit(queue, 1, &submit_info, fence);
+    result          = device_table_->WaitForFences(device_, 1, &fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
+    result          = device_table_->ResetFences(device_, 1, &fence);
     return result;
 }
 
@@ -1492,21 +1497,20 @@ VkResult VulkanResourceInitializer::PixelShaderImageCopy(uint32_t               
 
 VkResult VulkanResourceInitializer::FlushCommandBuffer(uint32_t queue_family_index)
 {
-    auto iter = command_exec_objects_.find(queue_family_index);
-
+    auto     iter   = command_buffer_assets_.find(queue_family_index);
     VkResult result = VK_SUCCESS;
 
-    if (iter != command_exec_objects_.end() && iter->second.recording)
+    if (iter != command_buffer_assets_.end() && iter->second.recording)
     {
-        device_table_->EndCommandBuffer(iter->second.command_buffer);
+        auto& exec_object = iter->second;
+        device_table_->EndCommandBuffer(exec_object.command_buffer);
+        result = ExecuteCommandBuffer(exec_object.queue, exec_object.command_buffer, exec_object.fence);
 
-        result = ExecuteCommandBuffer(iter->second.queue, iter->second.command_buffer);
         if (result == VK_SUCCESS)
         {
-            iter->second.recording = false;
+            exec_object.recording = false;
         }
     }
-
     return result;
 }
 
@@ -1514,11 +1518,11 @@ VkResult VulkanResourceInitializer::FlushRemainingResourcesInit()
 {
     FlushStagingBuffer();
     VkResult result = VK_SUCCESS;
-    for (const auto& exec_object : command_exec_objects_)
+    for (const auto& [queue_family_idx, exec_object] : command_buffer_assets_)
     {
-        if (exec_object.second.recording)
+        if (exec_object.recording)
         {
-            result = FlushCommandBuffer(exec_object.first);
+            result = FlushCommandBuffer(queue_family_idx);
             if (result != VK_SUCCESS)
             {
                 break;
