@@ -84,17 +84,17 @@ class ThreadPool
      * @return  a std::future holding the return value.
      */
     template <Priority prio = Priority::Default, typename Func, typename... Args>
-    std::future<typename std::invoke_result<Func, Args...>::type> post(Func&& f, Args&&... args)
+    std::future<std::invoke_result_t<Func, Args...>> post(Func&& f, Args&&... args)
     {
-        using result_t        = typename std::invoke_result<Func, Args...>::type;
+        using result_t        = std::invoke_result_t<Func, Args...>;
         using packaged_task_t = std::packaged_task<result_t()>;
         auto packed_task =
             std::make_shared<packaged_task_t>(std::bind(std::forward<Func>(f), std::forward<Args>(args)...));
         auto future = packed_task->get_future();
 
         {
-            std::unique_lock<std::mutex> lock(mutex_);
-            constexpr uint32_t           queue_index =
+            std::unique_lock   lock(mutex_);
+            constexpr uint32_t queue_index =
                 std::min(static_cast<uint32_t>(prio), static_cast<uint32_t>(Priority::Default));
             queues_[queue_index].push_back(std::bind(&packaged_task_t::operator(), packed_task));
         }
