@@ -2191,8 +2191,6 @@ void VulkanAddressReplacer::run_compute_replace(const VulkanCommandBufferInfo*  
         return;
     }
 
-    GFXRECON_LOG_DEBUG("%s: running gpu-replacement for %d addresses", __func__, addresses.size());
-
     // sort array to allow binary-search
     std::sort(storage_bda_binary_.begin(), storage_bda_binary_.end());
 
