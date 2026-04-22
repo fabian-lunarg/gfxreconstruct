@@ -1075,7 +1075,7 @@ void VulkanAddressReplacer::ProcessCmdTraceRays(
                                         sizeof(replacer_params_sbt_t),
                                         &replacer_params);
         // run a single workgroup
-        constexpr uint32_t wg_size = 32;
+        constexpr uint32_t wg_size = 64;
         device_table_->CmdDispatch(
             command_buffer_info->handle, util::div_up(replacer_params.num_handles, wg_size), 1, 1);
 
@@ -1736,7 +1736,10 @@ bool VulkanAddressReplacer::init_pipeline()
         GFXRECON_LOG_FATAL("VulkanAddressReplacer: failed in vkCreatePipelineLayout");
     }
 
-    auto create_pipeline = [this](VkPipelineLayout layout, const auto& spirv, VkPipeline& out_pipeline) -> VkResult {
+    auto create_pipeline = [this](VkPipelineLayout   layout,
+                                  const auto&        spirv,
+                                  const std::string& entry_point,
+                                  VkPipeline&        out_pipeline) -> VkResult {
         using elem_t                                       = typename std::decay_t<decltype(spirv)>::value_type;
         VkShaderModule           compute_module            = VK_NULL_HANDLE;
         VkShaderModuleCreateInfo shader_module_create_info = {};
@@ -1760,7 +1763,7 @@ bool VulkanAddressReplacer::init_pipeline()
         stage_info.flags                           = 0;
         stage_info.stage                           = VK_SHADER_STAGE_COMPUTE_BIT;
         stage_info.module                          = compute_module;
-        stage_info.pName                           = "main";
+        stage_info.pName                           = entry_point.c_str();
         stage_info.pSpecializationInfo             = nullptr;
 
         VkComputePipelineCreateInfo pipeline_create_info = {};
@@ -1795,19 +1798,19 @@ bool VulkanAddressReplacer::init_pipeline()
     };
 
     // create SBT pipeline (hashmap search)
-    if (create_pipeline(pipeline_layout_, g_replacer_sbt_comp, pipeline_sbt_) != VK_SUCCESS)
+    if (create_pipeline(pipeline_layout_, g_replacer_spv, "replacer_sbt", pipeline_sbt_) != VK_SUCCESS)
     {
         return false;
     }
 
     // create BDA pipeline (binary search)
-    if (create_pipeline(pipeline_layout_, g_replacer_bda_binary_comp, pipeline_bda_) != VK_SUCCESS)
+    if (create_pipeline(pipeline_layout_, g_replacer_spv, "replacer_bda", pipeline_bda_) != VK_SUCCESS)
     {
         return false;
     }
 
     // create rehashing pipeline
-    if (create_pipeline(pipeline_layout_, g_replacer_rehash_comp, pipeline_bda_rehash_) != VK_SUCCESS)
+    if (create_pipeline(pipeline_layout_, g_replacer_spv, "replacer_rehash", pipeline_bda_rehash_) != VK_SUCCESS)
     {
         return false;
     }
@@ -2188,6 +2191,8 @@ void VulkanAddressReplacer::run_compute_replace(const VulkanCommandBufferInfo*  
         return;
     }
 
+    GFXRECON_LOG_DEBUG("%s: running gpu-replacement for %d addresses", __func__, addresses.size());
+
     // sort array to allow binary-search
     std::sort(storage_bda_binary_.begin(), storage_bda_binary_.end());
 
@@ -2283,7 +2288,7 @@ void VulkanAddressReplacer::run_compute_replace(const VulkanCommandBufferInfo*  
                                     sizeof(replacer_params_bda_t),
                                     &replacer_params);
     // dispatch workgroups
-    constexpr uint32_t wg_size = 32;
+    constexpr uint32_t wg_size = 64;
     device_table_->CmdDispatch(command_buffer_info->handle, util::div_up(replacer_params.num_handles, wg_size), 1, 1);
 
     // post memory-barrier
@@ -2493,7 +2498,7 @@ void VulkanAddressReplacer::update_global_hashmap(VkCommandBuffer command_buffer
                                             sizeof(rehash_params_t),
                                             &rehash_params);
             // dispatch workgroups
-            constexpr uint32_t wg_size = 32;
+            constexpr uint32_t wg_size = 64;
             device_table_->CmdDispatch(
                 submit_asset_.command_buffer, util::div_up(previous_control_block.capacity, wg_size), 1, 1);
         }
