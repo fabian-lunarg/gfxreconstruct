@@ -183,6 +183,14 @@
     "vkCmdEndRenderingKHR": "OverrideCmdEndRendering",
     "vkCreateIndirectExecutionSetEXT": "OverrideCreateIndirectExecutionSetEXT",
     "vkCmdPreprocessGeneratedCommandsEXT": "OverrideCmdPreprocessGeneratedCommandsEXT",
-    "vkCmdExecuteGeneratedCommandsEXT": "OverrideCmdExecuteGeneratedCommandsEXT"
+    "vkCmdExecuteGeneratedCommandsEXT": "OverrideCmdExecuteGeneratedCommandsEXT",
+    "vkCreateTensorARM": "OverrideCreateTensorARM",
+    "vkDestroyTensorARM": "OverrideDestroyTensorARM",
+    "vkBindTensorMemoryARM": "OverrideBindTensorMemoryARM",
+    "vkGetTensorMemoryRequirementsARM": "OverrideGetTensorMemoryRequirementsARM",
+    "vkCreateDataGraphPipelinesARM": "OverrideCreateDataGraphPipelinesARM",
+    "vkCreateDataGraphPipelineSessionARM": "OverrideCreateDataGraphPipelineSessionARM",
+    "vkDestroyDataGraphPipelineSessionARM": "OverrideDestroyDataGraphPipelineSessionARM",
+    "vkBindDataGraphPipelineSessionMemoryARM": "OverrideBindDataGraphPipelineSessionMemoryARM"
   }
 }
