@@ -10806,6 +10806,30 @@ void VulkanExportJsonConsumer::Process_vkQueueNotifyOutOfBandNV(
     WriteBlockEnd();
 }
 
+void VulkanExportJsonConsumer::Process_vkCreateDataGraphPipelinesARM(
+    const ApiCallInfo&                          call_info,
+    VkResult                                    returnValue,
+    format::HandleId                            device,
+    format::HandleId                            deferredOperation,
+    format::HandleId                            pipelineCache,
+    uint32_t                                    createInfoCount,
+    StructPointerDecoder<Decoded_VkDataGraphPipelineCreateInfoARM>* pCreateInfos,
+    StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator,
+    HandlePointerDecoder<VkPipeline>*           pPipelines)
+{
+    nlohmann::ordered_json& jdata = WriteApiCallStart(call_info, "vkCreateDataGraphPipelinesARM");
+    jdata[NameReturn()] = returnValue;
+    auto& args = jdata[NameArgs()];
+        HandleToJson(args["device"], device);
+        HandleToJson(args["deferredOperation"], deferredOperation);
+        HandleToJson(args["pipelineCache"], pipelineCache);
+        args["createInfoCount"] = createInfoCount;
+        FieldToJson(args["pCreateInfos"], pCreateInfos);
+        FieldToJson(args["pAllocator"], pAllocator);
+        HandleToJson(args["pPipelines"], pPipelines);
+    WriteBlockEnd();
+}
+
 void VulkanExportJsonConsumer::Process_vkCreateDataGraphPipelineSessionARM(
     const ApiCallInfo&                          call_info,
     VkResult                                    returnValue,
@@ -11311,6 +11335,24 @@ void VulkanExportJsonConsumer::Process_vkGetPhysicalDeviceQueueFamilyDataGraphOp
         FieldToJson(args["pOpticalFlowImageFormatInfo"], pOpticalFlowImageFormatInfo);
         FieldToJson(args["pFormatCount"], pFormatCount);
         FieldToJson(args["pImageFormatProperties"], pImageFormatProperties);
+    WriteBlockEnd();
+}
+
+void VulkanExportJsonConsumer::Process_vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM(
+    const ApiCallInfo&                          call_info,
+    VkResult                                    returnValue,
+    format::HandleId                            physicalDevice,
+    uint32_t                                    queueFamilyIndex,
+    StructPointerDecoder<Decoded_VkQueueFamilyDataGraphPropertiesARM>* pQueueFamilyDataGraphProperties,
+    StructPointerDecoder<Decoded_VkBaseOutStructure>* pProperties)
+{
+    nlohmann::ordered_json& jdata = WriteApiCallStart(call_info, "vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM");
+    jdata[NameReturn()] = returnValue;
+    auto& args = jdata[NameArgs()];
+        HandleToJson(args["physicalDevice"], physicalDevice);
+        args["queueFamilyIndex"] = queueFamilyIndex;
+        FieldToJson(args["pQueueFamilyDataGraphProperties"], pQueueFamilyDataGraphProperties);
+        FieldToJson(args["pProperties"], pProperties);
     WriteBlockEnd();
 }
 

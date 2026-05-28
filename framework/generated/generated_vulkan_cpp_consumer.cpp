@@ -17095,6 +17095,56 @@ void VulkanCppConsumer::Process_vkCreateDataGraphPipelineSessionARM(
     Post_APICall(format::ApiCallId::ApiCall_vkCreateDataGraphPipelineSessionARM);
 }
 
+void VulkanCppConsumer::Process_vkCreateDataGraphPipelinesARM(
+    const ApiCallInfo&                          call_info,
+    VkResult                                    returnValue,
+    format::HandleId                            device,
+    format::HandleId                            deferredOperation,
+    format::HandleId                            pipelineCache,
+    uint32_t                                    createInfoCount,
+    StructPointerDecoder<Decoded_VkDataGraphPipelineCreateInfoARM>* pCreateInfos,
+    StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator,
+    HandlePointerDecoder<VkPipeline>*           pPipelines)
+{
+    FILE* file = GetFrameFile();
+    fprintf(file, "\t{\n");
+    std::stringstream stream_pcreate_infos;
+    std::string pcreate_infos_array = "NULL";
+    PointerPairContainer<decltype(pCreateInfos->GetPointer()), decltype(pCreateInfos->GetMetaStructPointer())> pcreate_infos_pair{ pCreateInfos->GetPointer(), pCreateInfos->GetMetaStructPointer(), createInfoCount };
+    std::string pcreate_infos_names = toStringJoin(pcreate_infos_pair.begin(),
+                                                   pcreate_infos_pair.end(),
+                                                   [&](auto pair) {{ return GenerateStruct_VkDataGraphPipelineCreateInfoARM(stream_pcreate_infos, pair.t1, pair.t2, *this); }},
+                                                   ", ");
+    if (stream_pcreate_infos.str().length() > 0) {
+        fprintf(file, "%s", stream_pcreate_infos.str().c_str());
+        if (createInfoCount == 1) {
+            pcreate_infos_array = "&" + pcreate_infos_names;
+        } else if (createInfoCount > 1) {
+            pcreate_infos_array = "pCreateInfos_" + std::to_string(this->GetNextId());
+            fprintf(file, "\t\tVkDataGraphPipelineCreateInfoARM %s[] = { %s };\n", pcreate_infos_array.c_str(), pcreate_infos_names.c_str());
+        }
+    }
+    std::string ppipelines_name = "pPipelines_" + std::to_string(this->GetNextId(VK_OBJECT_TYPE_PIPELINE));
+    AddKnownVariables("VkPipeline", ppipelines_name, pPipelines->GetPointer(), createInfoCount);
+    if (returnValue == VK_SUCCESS) {
+        this->AddHandles(ppipelines_name,
+                         pPipelines->GetPointer(), createInfoCount);
+    }
+    pfn_loader_.AddMethodName("vkCreateDataGraphPipelinesARM");
+    fprintf(file,
+            "\t\tVK_CALL_CHECK(loaded_vkCreateDataGraphPipelinesARM(%s, %s, %s, %u, %s, %s, %s), %s);\n",
+            this->GetHandle(device).c_str(),
+            this->GetHandle(deferredOperation).c_str(),
+            this->GetHandle(pipelineCache).c_str(),
+            createInfoCount,
+            pcreate_infos_array.c_str(),
+            "nullptr",
+            ppipelines_name.c_str(),
+            util::ToString<VkResult>(returnValue).c_str());
+    fprintf(file, "\t}\n");
+    Post_APICall(format::ApiCallId::ApiCall_vkCreateDataGraphPipelinesARM);
+}
+
 void VulkanCppConsumer::Process_vkDestroyDataGraphPipelineSessionARM(
     const ApiCallInfo&                          call_info,
     format::HandleId                            device,
@@ -17879,6 +17929,40 @@ void VulkanCppConsumer::Process_vkCmdBeginCustomResolveEXT(
     fprintf(file, "\t}\n");
     Post_APICall(format::ApiCallId::ApiCall_vkCmdBeginCustomResolveEXT);
 }
+void VulkanCppConsumer::Process_vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM(
+    const ApiCallInfo&                          call_info,
+    VkResult                                    returnValue,
+    format::HandleId                            physicalDevice,
+    uint32_t                                    queueFamilyIndex,
+    StructPointerDecoder<Decoded_VkQueueFamilyDataGraphPropertiesARM>* pQueueFamilyDataGraphProperties,
+    StructPointerDecoder<Decoded_VkBaseOutStructure>* pProperties)
+{
+    FILE* file = GetFrameFile();
+    fprintf(file, "\t{\n");
+    std::stringstream stream_pqueue_family_data_graph_properties;
+    std::string pqueue_family_data_graph_properties_struct = GenerateStruct_VkQueueFamilyDataGraphPropertiesARM(stream_pqueue_family_data_graph_properties,
+                                                                                                                pQueueFamilyDataGraphProperties->GetPointer(),
+                                                                                                                pQueueFamilyDataGraphProperties->GetMetaStructPointer(),
+                                                                                                                *this);
+    fprintf(file, "%s", stream_pqueue_family_data_graph_properties.str().c_str());
+    std::string pproperties_name = "NULL";
+    if (!pProperties->IsNull()) {
+        pproperties_name = "pProperties_" + std::to_string(this->GetNextId());
+        fprintf(file, "\t\tVkBaseOutStructure %s = {};\n", pproperties_name.c_str());
+        pproperties_name.insert(0, "&");
+    }
+    pfn_loader_.AddMethodName("vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM");
+    fprintf(file,
+            "\t\tVK_CALL_CHECK(loaded_vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM(%s, %u, &%s, %s), %s);\n",
+            this->GetHandle(physicalDevice).c_str(),
+            queueFamilyIndex,
+            pqueue_family_data_graph_properties_struct.c_str(),
+            pproperties_name.c_str(),
+            util::ToString<VkResult>(returnValue).c_str());
+    fprintf(file, "\t}\n");
+    Post_APICall(format::ApiCallId::ApiCall_vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM);
+}
+
 void VulkanCppConsumer::Process_vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM(
     const ApiCallInfo&                          call_info,
     VkResult                                    returnValue,

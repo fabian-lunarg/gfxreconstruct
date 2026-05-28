@@ -11984,6 +11984,34 @@ void VulkanReplayConsumer::Process_vkQueueNotifyOutOfBandNV(
     GetDeviceTable(in_queue)->QueueNotifyOutOfBandNV(in_queue, in_pQueueTypeInfo);
 }
 
+void VulkanReplayConsumer::Process_vkCreateDataGraphPipelinesARM(
+    const ApiCallInfo&                          call_info,
+    VkResult                                    returnValue,
+    format::HandleId                            device,
+    format::HandleId                            deferredOperation,
+    format::HandleId                            pipelineCache,
+    uint32_t                                    createInfoCount,
+    StructPointerDecoder<Decoded_VkDataGraphPipelineCreateInfoARM>* pCreateInfos,
+    StructPointerDecoder<Decoded_VkAllocationCallbacks>* pAllocator,
+    HandlePointerDecoder<VkPipeline>*           pPipelines)
+{
+    auto in_device = GetObjectInfoTable().GetVkDeviceInfo(device);
+    auto in_deferredOperation = GetObjectInfoTable().GetVkDeferredOperationKHRInfo(deferredOperation);
+    auto in_pipelineCache = GetObjectInfoTable().GetVkPipelineCacheInfo(pipelineCache);
+
+    MapStructArrayHandles(pCreateInfos->GetMetaStructPointer(), pCreateInfos->GetLength(), GetObjectInfoTable());
+    if (!pPipelines->IsNull()) { pPipelines->SetHandleLength(createInfoCount); }
+    std::vector<VulkanPipelineInfo> handle_info(createInfoCount);
+    for (size_t i = 0; i < createInfoCount; ++i) { pPipelines->SetConsumerData(i, &handle_info[i]); }
+
+    PushRecaptureHandleIds(pPipelines->GetPointer(), pPipelines->GetLength());
+    VkResult replay_result = OverrideCreateDataGraphPipelinesARM(GetDeviceTable(in_device->handle)->CreateDataGraphPipelinesARM, returnValue, in_device, in_deferredOperation, in_pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines);
+    CheckResult("vkCreateDataGraphPipelinesARM", returnValue, replay_result, call_info);
+    ClearRecaptureHandleIds();
+
+    AddHandles<VulkanPipelineInfo>(device, pPipelines->GetPointer(), pPipelines->GetLength(), pPipelines->GetHandlePointer(), createInfoCount, std::move(handle_info), &CommonObjectInfoTable::AddVkPipelineInfo);
+}
+
 void VulkanReplayConsumer::Process_vkCreateDataGraphPipelineSessionARM(
     const ApiCallInfo&                          call_info,
     VkResult                                    returnValue,
@@ -12542,6 +12570,23 @@ void VulkanReplayConsumer::Process_vkGetPhysicalDeviceQueueFamilyDataGraphOptica
     CheckResult("vkGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM", returnValue, replay_result, call_info);
 
     if (pImageFormatProperties->IsNull()) { SetOutputArrayCount<VulkanPhysicalDeviceInfo>(physicalDevice, kPhysicalDeviceArrayGetPhysicalDeviceQueueFamilyDataGraphOpticalFlowImageFormatsARM, *out_pFormatCount, &CommonObjectInfoTable::GetVkPhysicalDeviceInfo); }
+}
+
+void VulkanReplayConsumer::Process_vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM(
+    const ApiCallInfo&                          call_info,
+    VkResult                                    returnValue,
+    format::HandleId                            physicalDevice,
+    uint32_t                                    queueFamilyIndex,
+    StructPointerDecoder<Decoded_VkQueueFamilyDataGraphPropertiesARM>* pQueueFamilyDataGraphProperties,
+    StructPointerDecoder<Decoded_VkBaseOutStructure>* pProperties)
+{
+    VkPhysicalDevice in_physicalDevice = MapHandle<VulkanPhysicalDeviceInfo>(physicalDevice, &CommonObjectInfoTable::GetVkPhysicalDeviceInfo);
+    const VkQueueFamilyDataGraphPropertiesARM* in_pQueueFamilyDataGraphProperties = pQueueFamilyDataGraphProperties->GetPointer();
+    MapStructHandles(pQueueFamilyDataGraphProperties->GetMetaStructPointer(), GetObjectInfoTable());
+    VkBaseOutStructure* out_pProperties = pProperties->IsNull() ? nullptr : pProperties->AllocateOutputData(1);
+
+    VkResult replay_result = GetInstanceTable(in_physicalDevice)->GetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM(in_physicalDevice, queueFamilyIndex, in_pQueueFamilyDataGraphProperties, out_pProperties);
+    CheckResult("vkGetPhysicalDeviceQueueFamilyDataGraphEngineOperationPropertiesARM", returnValue, replay_result, call_info);
 }
 
 void VulkanReplayConsumer::Process_vkCmdSetComputeOccupancyPriorityNV(
