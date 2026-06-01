@@ -1637,6 +1637,29 @@ ParsedBlock& BlockParser::ParseMetaData(BlockBuffer& block_buffer)
 
         HandleBlockReadError(kErrorReadingBlockHeader, "Failed to read set opaque address meta-data block header");
     }
+    else if (meta_data_type == format::MetaDataType::kResourceMemoryRequirementsCommand)
+    {
+        GFXRECON_CHECK_CONVERSION_DATA_LOSS(size_t, block_header.size);
+        const size_t           parameter_buffer_size = static_cast<size_t>(block_header.size) - sizeof(meta_data_id);
+        BlockBuffer::BlockSpan parameter_data        = block_buffer.ReadSpan(parameter_buffer_size);
+        success                                      = parameter_data.size() == parameter_buffer_size;
+
+        if (success)
+        {
+            // This command does not support compression.
+            auto* payload = Emplace<ResourceMemoryRequirementsArgs>(
+                meta_data_id,
+                reinterpret_cast<const uint8_t*>(parameter_data.data()),
+                parameter_buffer_size);
+            // NOTE: references block buffer
+            return MakeIncompressibleParsedBlock(block_buffer, payload);
+        }
+        else
+        {
+            HandleBlockReadError(kErrorReadingBlockHeader,
+                                 "Failed to read resource memory requirements meta-data block");
+        }
+    }
     else
     {
         if (meta_data_type >= format::MetaDataType::kBeginExperimentalReservedRange ||

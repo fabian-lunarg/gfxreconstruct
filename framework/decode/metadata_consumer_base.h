@@ -144,6 +144,11 @@ class MetadataConsumerBase
                                               const uint8_t*                       parameters_data)
     {}
 
+    virtual void ProcessResourceMemoryRequirementsCommand(format::HandleId device_id,
+                                                          size_t           data_size,
+                                                          const uint8_t*   data)
+    {}
+
   protected:
     uint64_t block_index_ = 0;
 };

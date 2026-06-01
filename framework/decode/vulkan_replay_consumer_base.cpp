@@ -23,6 +23,7 @@
 */
 
 #include "decode/vulkan_replay_consumer_base.h"
+#include "decode/vulkan_rebind_allocator.h"
 #include "decode/custom_vulkan_struct_handle_mappers.h"
 #include "decode/descriptor_update_template_decoder.h"
 #include "decode/resource_util.h"
@@ -2430,6 +2431,7 @@ void VulkanReplayConsumerBase::InitializeResourceAllocator(const VulkanPhysicalD
     functions.create_tensor                               = device_table->CreateTensorARM;
     functions.destroy_tensor                              = device_table->DestroyTensorARM;
     functions.get_tensor_memory_requirements              = device_table->GetTensorMemoryRequirementsARM;
+    functions.get_device_tensor_memory_requirements       = device_table->GetDeviceTensorMemoryRequirementsARM;
     functions.bind_tensor_memory                          = device_table->BindTensorMemoryARM;
     functions.create_data_graph_pipeline_session          = device_table->CreateDataGraphPipelineSessionARM;
     functions.get_data_graph_pipeline_session_memory_requirements =
@@ -11874,6 +11876,109 @@ void VulkanReplayConsumerBase::ProcessVulkanWriteAccelerationStructuresPropertie
                     query_type, acceleration_structure, GetDeviceAddressTracker(device_info));
         }
     }
+}
+
+void VulkanReplayConsumerBase::ProcessResourceMemoryRequirementsCommand(format::HandleId device_id,
+                                                                        size_t           data_size,
+                                                                        const uint8_t*   data)
+{
+    VulkanDeviceInfo* device_info = object_info_table_->GetVkDeviceInfo(device_id);
+    if (device_info == nullptr)
+    {
+        return;
+    }
+    auto* rebind = dynamic_cast<VulkanRebindAllocator*>(device_info->allocator.get());
+    if (rebind == nullptr)
+    {
+        return;
+    }
+
+    const uint8_t* ptr = data;
+    const uint8_t* end = data + data_size;
+
+    if (ptr + sizeof(uint64_t) > end)
+    {
+        GFXRECON_LOG_ERROR("ProcessResourceMemoryRequirementsCommand: data too small");
+        return;
+    }
+    uint64_t resource_count = 0;
+    memcpy(&resource_count, ptr, sizeof(resource_count));
+    ptr += sizeof(resource_count);
+
+    std::vector<VulkanRebindAllocator::ResourceMemoryRequirementsRecord> records;
+    records.reserve(static_cast<size_t>(resource_count));
+
+    for (uint64_t i = 0; i < resource_count; ++i)
+    {
+        if (ptr + sizeof(format::ResourceMemoryRequirementsEntry) > end)
+        {
+            GFXRECON_LOG_ERROR("ProcessResourceMemoryRequirementsCommand: truncated entry at index %" PRIu64, i);
+            break;
+        }
+        format::ResourceMemoryRequirementsEntry entry{};
+        memcpy(&entry, ptr, sizeof(entry));
+        ptr += sizeof(entry);
+
+        if (ptr + entry.create_info_size > end)
+        {
+            GFXRECON_LOG_ERROR(
+                "ProcessResourceMemoryRequirementsCommand: truncated create_info at index %" PRIu64, i);
+            break;
+        }
+        ptr += entry.create_info_size; // skip create_info blob; we query requirements on live handles
+
+        VulkanRebindAllocator::ResourceMemoryRequirementsRecord record{};
+        record.handle_id      = entry.handle_id;
+        record.resource_type  = entry.resource_type;
+        record.aliasing_group = entry.aliasing_group;
+
+        switch (static_cast<format::ResourceMemoryRequirementsResourceType>(entry.resource_type))
+        {
+            case format::ResourceMemoryRequirementsResourceType::kBuffer:
+            {
+                const VulkanBufferInfo* info = object_info_table_->GetVkBufferInfo(entry.handle_id);
+                if (info == nullptr)
+                {
+                    continue;
+                }
+                record.allocator_data = info->allocator_data;
+                record.replay_handle  = VK_HANDLE_TO_UINT64(info->handle);
+                break;
+            }
+            case format::ResourceMemoryRequirementsResourceType::kImage:
+            {
+                const VulkanImageInfo* info = object_info_table_->GetVkImageInfo(entry.handle_id);
+                if (info == nullptr)
+                {
+                    continue;
+                }
+                record.allocator_data = info->allocator_data;
+                record.replay_handle  = VK_HANDLE_TO_UINT64(info->handle);
+                break;
+            }
+            case format::ResourceMemoryRequirementsResourceType::kTensor:
+            {
+                const VulkanTensorARMInfo* info = object_info_table_->GetVkTensorARMInfo(entry.handle_id);
+                if (info == nullptr)
+                {
+                    continue;
+                }
+                record.allocator_data = info->allocator_data;
+                record.replay_handle  = VK_HANDLE_TO_UINT64(info->handle);
+                break;
+            }
+            default:
+                GFXRECON_LOG_WARNING("ProcessResourceMemoryRequirementsCommand: unknown resource_type %u at index "
+                                     "%" PRIu64,
+                                     entry.resource_type,
+                                     i);
+                continue;
+        }
+
+        records.push_back(record);
+    }
+
+    rebind->ProcessResourceMemoryRequirements(records);
 }
 
 void VulkanReplayConsumerBase::OverrideUpdateDescriptorSets(

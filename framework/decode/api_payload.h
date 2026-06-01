@@ -546,6 +546,15 @@ struct SetOpaqueDescriptorDataArgs
 
     auto GetTuple() const { return std::tie(thread_id, device_id, object_id, size, data); }
 };
+struct ResourceMemoryRequirementsArgs
+{
+    format::MetaDataId meta_data_id; // Needed by DispatchVisitor, but not ApiDecoder
+
+    const uint8_t* parameter_buffer;
+    size_t         buffer_size;
+
+    auto GetTuple() const { return std::tie(parameter_buffer, buffer_size); }
+};
 
 // --- DispatchTraits specializations  ---
 template <typename T>
@@ -778,6 +787,12 @@ struct DispatchTraits<SetOpaqueDescriptorDataArgs> : DispatchFlagTraits<SetOpaqu
 };
 
 template <>
+struct DispatchTraits<ResourceMemoryRequirementsArgs> : DispatchFlagTraits<ResourceMemoryRequirementsArgs>
+{
+    static constexpr auto kDecoderMethod = &ApiDecoder::DispatchResourceMemoryRequirementsCommand;
+};
+
+template <>
 struct DispatchTraits<AnnotationArgs> : DispatchFlagTraits<AnnotationArgs>
 {
     // Is not dispatched to decoders, and thus requires a custom DispatchVisitor::VisitCommand overload
@@ -822,7 +837,8 @@ using DispatchArgs = std::variant<std::monostate,
                                   ViewRelativeLocationArgs*,
                                   InitializeMetaArgs*,
                                   AnnotationArgs*,
-                                  SetOpaqueDescriptorDataArgs*>;
+                                  SetOpaqueDescriptorDataArgs*,
+                                  ResourceMemoryRequirementsArgs*>;
 
 template <typename Args>
 inline size_t GetDispatchArgsDataSize(Args& args)

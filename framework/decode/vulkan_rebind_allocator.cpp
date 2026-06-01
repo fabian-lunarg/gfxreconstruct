@@ -279,7 +279,6 @@ VkResult VulkanRebindAllocator::CreateBuffer(const VkBufferCreateInfo*    create
                                              ResourceData*                allocator_data)
 {
     GFXRECON_UNREFERENCED_PARAMETER(allocation_callbacks);
-    GFXRECON_UNREFERENCED_PARAMETER(capture_id);
 
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -292,10 +291,11 @@ VkResult VulkanRebindAllocator::CreateBuffer(const VkBufferCreateInfo*    create
 
         if (result >= 0)
         {
-            auto resource_alloc_info         = new ResourceAllocInfo;
-            resource_alloc_info->usage       = create_info->usage;
-            resource_alloc_info->object_type = VK_OBJECT_TYPE_BUFFER;
-            (*allocator_data)                = reinterpret_cast<uintptr_t>(resource_alloc_info);
+            auto resource_alloc_info             = new ResourceAllocInfo;
+            resource_alloc_info->usage           = create_info->usage;
+            resource_alloc_info->object_type     = VK_OBJECT_TYPE_BUFFER;
+            resource_alloc_info->capture_id      = capture_id;
+            (*allocator_data)                    = reinterpret_cast<uintptr_t>(resource_alloc_info);
 
             if (create_info->pNext != nullptr)
             {
@@ -336,7 +336,6 @@ VkResult VulkanRebindAllocator::CreateImage(const VkImageCreateInfo*     create_
                                             ResourceData*                allocator_data)
 {
     GFXRECON_UNREFERENCED_PARAMETER(allocation_callbacks);
-    GFXRECON_UNREFERENCED_PARAMETER(capture_id);
 
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -346,13 +345,14 @@ VkResult VulkanRebindAllocator::CreateImage(const VkImageCreateInfo*     create_
 
         if (result >= 0)
         {
-            auto resource_alloc_info         = new ResourceAllocInfo;
-            resource_alloc_info->usage       = create_info->usage;
-            resource_alloc_info->tiling      = create_info->tiling;
-            resource_alloc_info->height      = create_info->extent.height;
-            resource_alloc_info->format      = create_info->format;
-            resource_alloc_info->object_type = VK_OBJECT_TYPE_IMAGE;
-            (*allocator_data)                = reinterpret_cast<uintptr_t>(resource_alloc_info);
+            auto resource_alloc_info             = new ResourceAllocInfo;
+            resource_alloc_info->usage           = create_info->usage;
+            resource_alloc_info->tiling          = create_info->tiling;
+            resource_alloc_info->height          = create_info->extent.height;
+            resource_alloc_info->format          = create_info->format;
+            resource_alloc_info->object_type     = VK_OBJECT_TYPE_IMAGE;
+            resource_alloc_info->capture_id      = capture_id;
+            (*allocator_data)                    = reinterpret_cast<uintptr_t>(resource_alloc_info);
 
             if (create_info->pNext != nullptr)
             {
@@ -785,9 +785,18 @@ VkResult VulkanRebindAllocator::BindBufferMemory(VkBuffer                       
         auto           resource_alloc_info = reinterpret_cast<ResourceAllocInfo*>(allocator_buffer_data);
         auto           memory_alloc_info   = reinterpret_cast<MemoryAllocInfo*>(allocator_memory_data);
         VmaMemoryInfo* vma_mem_info        = nullptr;
+        uint32_t       aliasing_group      = 0;
 
-        result = AllocateMemoryForBuffer(
-            buffer, memory_offset, device_memory_properties, *resource_alloc_info, *memory_alloc_info, &vma_mem_info);
+        if (GetAliasingGroupWithRequirements(resource_alloc_info->capture_id, &aliasing_group))
+        {
+            result = AllocateMemoryForAliasedObjects(
+                *resource_alloc_info, aliasing_group, *memory_alloc_info, memory_offset, &vma_mem_info);
+        }
+        else
+        {
+            result = AllocateMemoryForBuffer(
+                buffer, memory_offset, device_memory_properties, *resource_alloc_info, *memory_alloc_info, &vma_mem_info);
+        }
 
         if (result >= 0)
         {
@@ -1024,13 +1033,22 @@ VkResult VulkanRebindAllocator::BindImageMemory(VkImage                         
         {
             auto           resource_alloc_info = reinterpret_cast<ResourceAllocInfo*>(allocator_image_data);
             VmaMemoryInfo* vma_mem_info        = nullptr;
+            uint32_t       aliasing_group      = 0;
 
-            result = AllocateMemoryForImage(image,
-                                            memory_offset,
-                                            device_memory_properties,
-                                            *resource_alloc_info,
-                                            *memory_alloc_info,
-                                            &vma_mem_info);
+            if (GetAliasingGroupWithRequirements(resource_alloc_info->capture_id, &aliasing_group))
+            {
+                result = AllocateMemoryForAliasedObjects(
+                    *resource_alloc_info, aliasing_group, *memory_alloc_info, memory_offset, &vma_mem_info);
+            }
+            else
+            {
+                result = AllocateMemoryForImage(image,
+                                                memory_offset,
+                                                device_memory_properties,
+                                                *resource_alloc_info,
+                                                *memory_alloc_info,
+                                                &vma_mem_info);
+            }
 
             if (result >= 0)
             {
@@ -3359,7 +3377,6 @@ VkResult VulkanRebindAllocator::CreateTensor(const VkTensorCreateInfoARM* create
                                              ResourceData*                allocator_data)
 {
     GFXRECON_UNREFERENCED_PARAMETER(allocation_callbacks);
-    GFXRECON_UNREFERENCED_PARAMETER(capture_id);
 
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -3369,10 +3386,11 @@ VkResult VulkanRebindAllocator::CreateTensor(const VkTensorCreateInfoARM* create
 
         if (result >= 0)
         {
-            auto resource_alloc_info         = new ResourceAllocInfo;
-            resource_alloc_info->usage       = create_info->pDescription->usage;
-            resource_alloc_info->object_type = VK_OBJECT_TYPE_TENSOR_ARM;
-            (*allocator_data)                = reinterpret_cast<uintptr_t>(resource_alloc_info);
+            auto resource_alloc_info             = new ResourceAllocInfo;
+            resource_alloc_info->usage           = create_info->pDescription->usage;
+            resource_alloc_info->object_type     = VK_OBJECT_TYPE_TENSOR_ARM;
+            resource_alloc_info->capture_id      = capture_id;
+            (*allocator_data)                    = reinterpret_cast<uintptr_t>(resource_alloc_info);
 
             if (create_info->pNext != nullptr)
             {
@@ -3797,6 +3815,155 @@ VulkanRebindAllocator::BindDataGraphPipelineSessionMemory(uint32_t bind_info_cou
     return VK_SUCCESS;
 }
 
+void VulkanRebindAllocator::ProcessResourceMemoryRequirements(
+    const std::vector<ResourceMemoryRequirementsRecord>& records)
+{
+    for (const auto& record : records)
+    {
+        if (record.aliasing_group == 0 || record.allocator_data == 0)
+        {
+            continue;
+        }
+
+        VkMemoryRequirements2 req2{};
+        req2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+
+        switch (static_cast<format::ResourceMemoryRequirementsResourceType>(record.resource_type))
+        {
+            case format::ResourceMemoryRequirementsResourceType::kBuffer:
+            {
+                VkBufferMemoryRequirementsInfo2 info{};
+                info.sType  = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2;
+                info.buffer = UINT64_TO_VK_HANDLE(VkBuffer, record.replay_handle);
+                functions_.get_buffer_memory_requirements2(device_, &info, &req2);
+                break;
+            }
+            case format::ResourceMemoryRequirementsResourceType::kImage:
+            {
+                VkImageMemoryRequirementsInfo2 info{};
+                info.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2;
+                info.image = UINT64_TO_VK_HANDLE(VkImage, record.replay_handle);
+                functions_.get_image_memory_requirements2(device_, &info, &req2);
+                break;
+            }
+            case format::ResourceMemoryRequirementsResourceType::kTensor:
+            {
+                VkTensorMemoryRequirementsInfoARM info{};
+                info.sType  = VK_STRUCTURE_TYPE_TENSOR_MEMORY_REQUIREMENTS_INFO_ARM;
+                info.tensor = UINT64_TO_VK_HANDLE(VkTensorARM, record.replay_handle);
+                functions_.get_tensor_memory_requirements(device_, &info, &req2);
+                break;
+            }
+            default:
+                GFXRECON_LOG_ERROR("ProcessResourceMemoryRequirements: unknown resource type %u",
+                                   record.resource_type);
+                continue;
+        }
+
+        const VkMemoryRequirements& replay_req = req2.memoryRequirements;
+
+        resources_aliasing_group_[record.handle_id] = record.aliasing_group;
+
+        auto& max_req      = aliasing_group_max_memory_requirements_[record.aliasing_group];
+        max_req.size       = std::max(max_req.size, replay_req.size);
+        max_req.alignment  = std::max(max_req.alignment, replay_req.alignment);
+        max_req.memoryTypeBits = (max_req.memoryTypeBits == 0) ? replay_req.memoryTypeBits
+                                                                : (max_req.memoryTypeBits & replay_req.memoryTypeBits);
+    }
+}
+
+bool VulkanRebindAllocator::GetAliasingGroupWithRequirements(format::HandleId capture_id,
+                                                             uint32_t*        aliasing_group) const
+{
+    auto it = resources_aliasing_group_.find(capture_id);
+    if (it == resources_aliasing_group_.end())
+    {
+        return false;
+    }
+    *aliasing_group = it->second;
+    return true;
+}
+
+VkResult VulkanRebindAllocator::AllocateMemoryForAliasedObjects(const ResourceAllocInfo& resource_alloc_info,
+                                                                  uint32_t                 aliasing_group,
+                                                                  MemoryAllocInfo&         memory_alloc_info,
+                                                                  VkDeviceSize             memory_offset,
+                                                                  VmaMemoryInfo**          out_vma_mem_info)
+{
+    // Reuse the shared VMA allocation if already created for this group
+    auto it = memory_alloc_info.aliasing_group_vma_memories.find(aliasing_group);
+    if (it != memory_alloc_info.aliasing_group_vma_memories.end())
+    {
+        *out_vma_mem_info = it->second;
+        return VK_SUCCESS;
+    }
+
+    auto req_it = aliasing_group_max_memory_requirements_.find(aliasing_group);
+    if (req_it == aliasing_group_max_memory_requirements_.end())
+    {
+        GFXRECON_LOG_ERROR("AllocateMemoryForAliasedObjects: no pre-computed requirements for group %u",
+                           aliasing_group);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    VkMemoryRequirements max_req = req_it->second;
+
+    VkMemoryPropertyFlags capture_props =
+        capture_memory_properties_.memoryTypes[memory_alloc_info.original_index].propertyFlags;
+
+    VmaMemoryUsage vma_usage = VMA_MEMORY_USAGE_UNKNOWN;
+    switch (resource_alloc_info.object_type)
+    {
+        case VK_OBJECT_TYPE_BUFFER:
+            vma_usage = GetBufferMemoryUsage(
+                static_cast<VkBufferUsageFlags>(resource_alloc_info.usage), capture_props, max_req);
+            break;
+        case VK_OBJECT_TYPE_IMAGE:
+            vma_usage = GetImageMemoryUsage(static_cast<VkImageUsageFlags>(resource_alloc_info.usage),
+                                             resource_alloc_info.tiling,
+                                             capture_props,
+                                             max_req);
+            break;
+        case VK_OBJECT_TYPE_TENSOR_ARM:
+            vma_usage = GetTensorMemoryUsage(
+                static_cast<VkTensorUsageFlagsARM>(resource_alloc_info.usage), capture_props, max_req);
+            break;
+        default:
+            GFXRECON_LOG_WARNING("AllocateMemoryForAliasedObjects: unexpected object type");
+            break;
+    }
+
+    VmaAllocationCreateInfo create_info{};
+    create_info.flags          = 0;
+    create_info.usage          = vma_usage;
+    create_info.requiredFlags  = 0;
+    create_info.preferredFlags = 0;
+    create_info.memoryTypeBits = 0;
+    create_info.pool           = VK_NULL_HANDLE;
+    create_info.pUserData      = nullptr;
+
+    VmaMemoryInfo mem_info{};
+    mem_info.memory_info                        = &memory_alloc_info;
+    mem_info.capture_mem_req                    = max_req;
+    mem_info.replay_mem_req                     = max_req;
+    mem_info.requires_dedicated_allocation      = false;
+    mem_info.prefers_dedicated_allocation       = false;
+    mem_info.alc_create_info                    = create_info;
+    mem_info.offset_from_original_device_memory = 0;
+
+    VkResult result =
+        vmaAllocateMemory(allocator_, &max_req, &create_info, &mem_info.allocation, &mem_info.allocation_info);
+
+    if (result >= 0)
+    {
+        memory_alloc_info.vma_mem_infos.emplace_back(std::make_unique<VmaMemoryInfo>(mem_info));
+        VmaMemoryInfo* stored                                   = memory_alloc_info.vma_mem_infos.back().get();
+        memory_alloc_info.aliasing_group_vma_memories[aliasing_group] = stored;
+        *out_vma_mem_info                                       = stored;
+    }
+
+    return result;
+}
+
 VkResult VulkanRebindAllocator::BindTensorMemory(uint32_t                         bind_info_count,
                                                  const VkBindTensorMemoryInfoARM* bind_infos,
                                                  const ResourceData*              allocator_tensor_datas,
@@ -3822,14 +3989,24 @@ VkResult VulkanRebindAllocator::BindTensorMemory(uint32_t                       
                 auto           memory_alloc_info   = reinterpret_cast<MemoryAllocInfo*>(allocator_memory_data);
                 VkDeviceSize   memory_offset       = bind_infos[i].memoryOffset;
                 VmaMemoryInfo* vma_mem_info        = nullptr;
+                uint32_t       aliasing_group      = 0;
 
                 const size_t vma_count_before = memory_alloc_info->vma_mem_infos.size();
-                result                        = AllocateMemoryForTensor(tensor,
-                                                 memory_offset,
-                                                 capture_memory_properties_,
-                                                 *resource_alloc_info,
-                                                 *memory_alloc_info,
-                                                 &vma_mem_info);
+
+                if (GetAliasingGroupWithRequirements(resource_alloc_info->capture_id, &aliasing_group))
+                {
+                    result = AllocateMemoryForAliasedObjects(
+                        *resource_alloc_info, aliasing_group, *memory_alloc_info, memory_offset, &vma_mem_info);
+                }
+                else
+                {
+                    result = AllocateMemoryForTensor(tensor,
+                                                     memory_offset,
+                                                     capture_memory_properties_,
+                                                     *resource_alloc_info,
+                                                     *memory_alloc_info,
+                                                     &vma_mem_info);
+                }
 
                 if (result >= 0)
                 {

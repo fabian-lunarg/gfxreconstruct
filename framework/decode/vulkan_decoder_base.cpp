@@ -644,6 +644,32 @@ void VulkanDecoderBase::DispatchVulkanAccelerationStructuresWritePropertiesMetaC
     }
 }
 
+void VulkanDecoderBase::DispatchResourceMemoryRequirementsCommand(const uint8_t* parameter_buffer,
+                                                                  size_t         buffer_size)
+{
+    const size_t min_header = sizeof(format::ThreadId) + sizeof(format::HandleId) + sizeof(uint64_t);
+    if (buffer_size < min_header)
+    {
+        GFXRECON_LOG_ERROR("DispatchResourceMemoryRequirementsCommand: block too small (%zu bytes)", buffer_size);
+        return;
+    }
+
+    const uint8_t* ptr = parameter_buffer;
+    format::ThreadId thread_id;
+    format::HandleId device_id;
+    memcpy(&thread_id, ptr, sizeof(thread_id));
+    ptr += sizeof(thread_id);
+    memcpy(&device_id, ptr, sizeof(device_id));
+    ptr += sizeof(device_id);
+
+    const size_t remaining = buffer_size - (ptr - parameter_buffer);
+
+    for (auto consumer : consumers_)
+    {
+        consumer->ProcessResourceMemoryRequirementsCommand(device_id, remaining, ptr);
+    }
+}
+
 void VulkanDecoderBase::DispatchExecuteBlocksFromFile(format::ThreadId   thread_id,
                                                       uint32_t           n_blocks,
                                                       int64_t            offset,

@@ -225,6 +225,10 @@ class VulkanReplayConsumerBase : public VulkanConsumer
                                                                    VkQueryType      query_type,
                                                                    format::HandleId acceleration_structure_id) override;
 
+    void ProcessResourceMemoryRequirementsCommand(format::HandleId device_id,
+                                                  size_t           data_size,
+                                                  const uint8_t*   data) override;
+
     template <typename T>
     void AllowCompileDuringPipelineCreation(uint32_t create_info_count, const T* create_infos)
     {

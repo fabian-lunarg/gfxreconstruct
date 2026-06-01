@@ -170,6 +170,7 @@ enum class MetaDataType : uint16_t
     kCreateHardwareBufferCommand                        = 35,
     kInitializeMetaCommand                              = 36,
     kSetOpaqueCaptureDescriptorDataCommand              = 37,
+    kResourceMemoryRequirementsCommand                  = 38,
 
     //! reserve values with highest-bit for special purposes
     kBeginExperimentalReservedRange = 1U << 15U
@@ -786,6 +787,34 @@ struct InitializeMetaCommand
     // In the capture file, initialize metacommand data is written in the following order:
     // InitializeMetaCommandHeder
     // parameters data
+};
+
+enum class ResourceMemoryRequirementsResourceType : uint32_t
+{
+    kBuffer = 0,
+    kImage  = 1,
+    kTensor = 2,
+};
+
+// Header for kResourceMemoryRequirementsCommand blocks.
+// Followed in the stream by resource_count ResourceMemoryRequirementsEntry records,
+// each immediately followed by create_info_size bytes of VkCreate*Info data.
+struct ResourceMemoryRequirementsCommandHeader
+{
+    MetaDataHeader   meta_header;
+    format::ThreadId thread_id;
+    format::HandleId device_id;
+    uint64_t         resource_count;
+};
+
+// Fixed-size per-resource record within a kResourceMemoryRequirementsCommand block.
+struct ResourceMemoryRequirementsEntry
+{
+    format::HandleId handle_id;
+    uint32_t         resource_type;    // ResourceMemoryRequirementsResourceType
+    uint8_t          aliasing_group;   // 0 = not aliased
+    uint8_t          padding[3];       // explicit padding to align create_info_size
+    uint32_t         create_info_size; // byte length of the VkCreate*Info blob that follows
 };
 
 // Restore size_t to normal behavior.

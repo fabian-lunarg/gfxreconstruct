@@ -113,6 +113,9 @@ class VulkanResourceAllocator
         PFN_vkCreateTensorARM                              create_tensor{ nullptr };
         PFN_vkDestroyTensorARM                             destroy_tensor{ nullptr };
         PFN_vkGetTensorMemoryRequirementsARM               get_tensor_memory_requirements{ nullptr };
+        // TODO: ProcessResourceMemoryRequirements uses the live-handle path (get_tensor_memory_requirements)
+        //       rather than the create-info path from the ARM fork; this pfn could be removed.
+        PFN_vkGetDeviceTensorMemoryRequirementsARM         get_device_tensor_memory_requirements{ nullptr };
         PFN_vkBindTensorMemoryARM                          bind_tensor_memory{ nullptr };
         PFN_vkCreateDataGraphPipelineSessionARM            create_data_graph_pipeline_session{ nullptr };
         PFN_vkGetDataGraphPipelineSessionMemoryRequirementsARM
@@ -479,7 +482,7 @@ class VulkanResourceAllocator
 
     virtual uint64_t GetDeviceMemoryOpaqueCaptureAddress(const VkDeviceMemoryOpaqueCaptureAddressInfo* info,
                                                          MemoryData allocator_data) = 0;
-    virtual void     ClearStagingResources(){};
+    virtual void ClearStagingResources(){};
 };
 
 GFXRECON_END_NAMESPACE(decode)

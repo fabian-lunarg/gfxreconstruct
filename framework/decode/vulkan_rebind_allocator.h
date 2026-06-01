@@ -41,6 +41,15 @@ GFXRECON_BEGIN_NAMESPACE(decode)
 class VulkanRebindAllocator : public VulkanResourceAllocator
 {
   public:
+    struct ResourceMemoryRequirementsRecord
+    {
+        format::HandleId handle_id;      // capture-time handle ID
+        uint32_t         resource_type;  // format::ResourceMemoryRequirementsResourceType
+        uint32_t         aliasing_group; // 0 = not aliased
+        ResourceData     allocator_data; // live ResourceAllocInfo pointer (from object info)
+        uint64_t         replay_handle;  // VkBuffer/VkImage/VkTensorARM cast to uint64_t
+    };
+
     VulkanRebindAllocator();
 
     ~VulkanRebindAllocator() override = default;
@@ -57,6 +66,8 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
                                 const Functions&                        functions) override;
 
     virtual void Destroy() override;
+
+    void ProcessResourceMemoryRequirements(const std::vector<ResourceMemoryRequirementsRecord>& records);
 
     virtual VkResult CreateBuffer(const VkBufferCreateInfo*    create_info,
                                   const VkAllocationCallbacks* allocation_callbacks,
@@ -556,6 +567,7 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
         MemoryInfoType                    memory_info_type;
         std::vector<VmaMemoryInfo*>       bound_memory_infos; // VideoSession and sparse could be multiple bindings.
         std::vector<VkMemoryRequirements> capture_mem_reqs{};
+        format::HandleId                  capture_id{ format::kNullHandleId };
 
         VkObjectType  object_type{ VK_OBJECT_TYPE_UNKNOWN };
         VkFlags       usage{ 0 };
@@ -585,7 +597,8 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
         std::unique_ptr<uint8_t[]>                       original_content;
         std::unordered_map<uint64_t, ResourceAllocInfo*> original_objects; // Key is object handle.
 
-        std::vector<std::unique_ptr<VmaMemoryInfo>> vma_mem_infos;
+        std::vector<std::unique_ptr<VmaMemoryInfo>>        vma_mem_infos;
+        std::unordered_map<uint32_t, VmaMemoryInfo*>       aliasing_group_vma_memories;
 
         std::string          debug_utils_name;
         std::vector<uint8_t> debug_utils_tag;
@@ -716,6 +729,14 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
                                      MemoryAllocInfo&                        memory_alloc_info,
                                      VmaMemoryInfo**                         vma_mem_info);
 
+    bool GetAliasingGroupWithRequirements(format::HandleId capture_id, uint32_t* aliasing_group) const;
+
+    VkResult AllocateMemoryForAliasedObjects(const ResourceAllocInfo& resource_alloc_info,
+                                              uint32_t                 aliasing_group,
+                                              MemoryAllocInfo&         memory_alloc_info,
+                                              VkDeviceSize             memory_offset,
+                                              VmaMemoryInfo**          vma_mem_info);
+
     // If it's bind by vma function, like vmaBindBufferMemory2, vmaBindBufferImage2, get the offset from it.
     VkDeviceSize GetRebindOffsetFromVMA(VkDeviceSize original_offset, const VmaMemoryInfo& vma_mem_info);
 
@@ -789,6 +810,10 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
     // use VkDeviceMemory-handles as key to cover all allocations sharing the same block.
     std::mutex                                                      block_mutexes_guard_;
     std::unordered_map<VkDeviceMemory, std::unique_ptr<std::mutex>> block_mutexes_;
+
+    // Populated by ProcessResourceMemoryRequirements from kResourceMemoryRequirementsCommand blocks.
+    std::unordered_map<format::HandleId, uint32_t>          resources_aliasing_group_;
+    std::unordered_map<uint32_t, VkMemoryRequirements>      aliasing_group_max_memory_requirements_;
 };
 
 GFXRECON_END_NAMESPACE(decode)
