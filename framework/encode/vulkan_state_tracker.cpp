@@ -1393,15 +1393,15 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                                                               const UpdateTemplateInfo* template_info,
                                                               const void*               data)
 {
-    assert(set != VK_NULL_HANDLE);
+    GFXRECON_ASSERT(set != VK_NULL_HANDLE);
 
     // When processing descriptor updates, we pack the unique handle ID into the stored
     // VkWriteDescriptorSet/VkCopyDescriptorSet handles so that the state writer can determine if the object still
     // exists at state write time by checking for the ID in the active state table.
-    if ((template_info != nullptr) && (data != nullptr))
+    if (template_info != nullptr && data != nullptr)
     {
-        auto           wrapper = vulkan_wrappers::GetWrapper<vulkan_wrappers::DescriptorSetWrapper>(set);
-        const uint8_t* bytes   = reinterpret_cast<const uint8_t*>(data);
+        auto* wrapper = vulkan_wrappers::GetWrapper<vulkan_wrappers::DescriptorSetWrapper>(set);
+        auto* bytes   = reinterpret_cast<const uint8_t*>(data);
 
         wrapper->dirty = true;
 
@@ -1433,20 +1433,23 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                                              binding.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
                                              binding.type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
 
-                assert((immutable_image && binding.images != nullptr) ||
-                       (!immutable_image && binding.storage_images != nullptr));
+                GFXRECON_ASSERT(immutable_image && binding.images != nullptr ||
+                                !immutable_image && binding.storage_images != nullptr);
 
-                format::HandleId*      dst_sampler_ids = &binding.sampler_ids[current_array_element];
-                format::HandleId*      dst_image_ids   = &binding.handle_ids[current_array_element];
-                VkDescriptorImageInfo* dst_info        = immutable_image ? &binding.images[current_array_element]
-                                                                         : &binding.storage_images[current_array_element];
-                const uint8_t*         src_address     = bytes + current_offset;
+                // binding.sampler_ids 'can' be nullptr (e.g. for STORAGE_IMAGE)
+                format::HandleId* dst_sampler_ids =
+                    binding.sampler_ids ? &binding.sampler_ids[current_array_element] : nullptr;
+
+                format::HandleId*      dst_image_ids = &binding.handle_ids[current_array_element];
+                VkDescriptorImageInfo* dst_info      = immutable_image ? &binding.images[current_array_element]
+                                                                       : &binding.storage_images[current_array_element];
+                const uint8_t*         src_address   = bytes + current_offset;
 
                 for (uint32_t i = 0; i < current_writes; ++i)
                 {
                     auto image_info = reinterpret_cast<const VkDescriptorImageInfo*>(src_address);
-                    if ((binding.type == VK_DESCRIPTOR_TYPE_SAMPLER) ||
-                        (binding.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER))
+                    if (binding.type == VK_DESCRIPTOR_TYPE_SAMPLER ||
+                        binding.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                     {
                         dst_sampler_ids[i] =
                             vulkan_wrappers::GetWrappedId<vulkan_wrappers::SamplerWrapper>(image_info->sampler);
@@ -1459,7 +1462,6 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                     }
 
                     memcpy(&dst_info[i], image_info, sizeof(dst_info[i]));
-
                     src_address += entry.stride;
                 }
 
@@ -1468,13 +1470,11 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                 {
                     break;
                 }
-                else
-                {
-                    current_count -= current_writes;
-                    current_binding += 1;
-                    current_array_element = 0;
-                    current_offset += (current_writes * entry.stride);
-                }
+
+                current_count -= current_writes;
+                current_binding += 1;
+                current_array_element = 0;
+                current_offset += (current_writes * entry.stride);
             }
         }
 
@@ -1535,13 +1535,11 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                 {
                     break;
                 }
-                else
-                {
-                    current_count -= current_writes;
-                    current_binding += 1;
-                    current_array_element = 0;
-                    current_offset += (current_writes * entry.stride);
-                }
+
+                current_count -= current_writes;
+                current_binding += 1;
+                current_array_element = 0;
+                current_offset += (current_writes * entry.stride);
             }
         }
 
@@ -1557,8 +1555,7 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
             for (;;)
             {
                 auto& binding = wrapper->bindings[current_binding];
-
-                assert(binding.uniform_texel_buffer_views != nullptr);
+                GFXRECON_ASSERT(binding.uniform_texel_buffer_views != nullptr);
 
                 // Check count for consecutive updates.
                 uint32_t current_writes = std::min(current_count, (binding.count - current_array_element));
@@ -1591,13 +1588,11 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                 {
                     break;
                 }
-                else
-                {
-                    current_count -= current_writes;
-                    current_binding += 1;
-                    current_array_element = 0;
-                    current_offset += (current_writes * entry.stride);
-                }
+
+                current_count -= current_writes;
+                current_binding += 1;
+                current_array_element = 0;
+                current_offset += (current_writes * entry.stride);
             }
         }
 
@@ -1613,8 +1608,7 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
             for (;;)
             {
                 auto& binding = wrapper->bindings[current_binding];
-
-                assert(binding.acceleration_structures != nullptr);
+                GFXRECON_ASSERT(binding.acceleration_structures != nullptr);
 
                 // Check count for consecutive updates.
                 uint32_t current_writes = std::min(current_count, (binding.count - current_array_element));
@@ -1641,13 +1635,11 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                 {
                     break;
                 }
-                else
-                {
-                    current_count -= current_writes;
-                    current_binding += 1;
-                    current_array_element = 0;
-                    current_offset += (current_writes * entry.stride);
-                }
+
+                current_count -= current_writes;
+                current_binding += 1;
+                current_array_element = 0;
+                current_offset += (current_writes * entry.stride);
             }
         }
         for (const auto& entry : template_info->inline_uniform_block)
@@ -1679,13 +1671,11 @@ void VulkanStateTracker::TrackUpdateDescriptorSetWithTemplate(VkDescriptorSet   
                 {
                     break;
                 }
-                else
-                {
-                    current_count -= current_num_bytes;
-                    current_binding += 1;
-                    current_array_element = 0;
-                    current_offset += (current_num_bytes * entry.stride);
-                }
+
+                current_count -= current_num_bytes;
+                current_binding += 1;
+                current_array_element = 0;
+                current_offset += (current_num_bytes * entry.stride);
             }
         }
     }
