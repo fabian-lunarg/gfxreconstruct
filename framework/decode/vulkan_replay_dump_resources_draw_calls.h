@@ -151,10 +151,12 @@ class DrawCallsDumpingContext
                                 const graphics::VulkanInstanceTable* inst_table,
                                 const VkCommandBufferBeginInfo*      begin_info);
 
-    VkResult CloneRenderPass(const VkRenderPassCreateInfo* original_render_pass_ci);
+    // load_variant: clone with LOAD_OP_LOAD to resume a pass from stored contents.
+    VkResult CloneRenderPass(const VkRenderPassCreateInfo* original_render_pass_ci, bool load_variant);
 
     VkResult CloneRenderPass2(const VulkanRenderPassInfo*    render_pass_info,
-                              const VkRenderPassCreateInfo2* original_render_pass_ci);
+                              const VkRenderPassCreateInfo2* original_render_pass_ci,
+                              bool                           load_variant);
 
     VkResult BeginRenderPass(const VulkanRenderPassInfo*  render_pass_info,
                              const VulkanFramebufferInfo* framebuffer_info,
@@ -204,6 +206,8 @@ class DrawCallsDumpingContext
     void FinalizeCommandBuffer(DrawCallParams* dc_params = nullptr);
 
     uint32_t GetDrawCallActiveCommandBuffers(CommandBufferIterator& first, CommandBufferIterator& last) const;
+
+    uint32_t GetWorkCommandBuffers(CommandBufferIterator& first, CommandBufferIterator& last) const;
 
     VkResult DumpDrawCalls(VkQueue             queue,
                            const VkSubmitInfo& submit_info,
@@ -330,6 +334,8 @@ class DrawCallsDumpingContext
     RenderPassType current_render_pass_type_;
 
     std::vector<std::vector<VkRenderPass>> render_pass_clones_;
+    std::vector<std::vector<VkRenderPass>> render_pass_load_clones_;
+    bool                                   load_chaining_active_;
 
     struct RenderPassAttachmentLayouts
     {

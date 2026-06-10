@@ -65,7 +65,7 @@ DrawCallsDumpingContext::DrawCallsDumpingContext(
     current_render_pass_type_(kNone), aux_command_buffer_(VK_NULL_HANDLE), aux_fence_(VK_NULL_HANDLE),
     command_buffer_level_(DumpResourcesCommandBufferLevel::kPrimary), device_table_(nullptr), instance_table_(nullptr),
     object_info_table_(object_info_table),
-    replay_device_phys_mem_props_(nullptr), secondary_with_dynamic_rendering_{ false },
+    replay_device_phys_mem_props_(nullptr), secondary_with_dynamic_rendering_{ false }, load_chaining_active_(false),
     acceleration_structures_context_(acceleration_structures_context), address_trackers_(address_trackers)
 {
     if (draw_indices != nullptr)
@@ -133,13 +133,16 @@ void DrawCallsDumpingContext::Release()
         ReleaseIndirectParams();
 
         // cleanup cloned renderpasses
-        for (auto& subpasses : render_pass_clones_)
+        for (auto& clones : { &render_pass_clones_, &render_pass_load_clones_ })
         {
-            for (VkRenderPass renderpass : subpasses)
+            for (auto& subpasses : *clones)
             {
-                if (renderpass != VK_NULL_HANDLE)
+                for (VkRenderPass renderpass : subpasses)
                 {
-                    device_table_->DestroyRenderPass(device, renderpass, nullptr);
+                    if (renderpass != VK_NULL_HANDLE)
+                    {
+                        device_table_->DestroyRenderPass(device, renderpass, nullptr);
+                    }
                 }
             }
         }
@@ -309,7 +312,7 @@ void DrawCallsDumpingContext::CmdDraw(const ApiCallInfo& call_info,
     }
 
     CommandBufferIterator first, last;
-    GetDrawCallActiveCommandBuffers(first, last);
+    GetWorkCommandBuffers(first, last);
     for (CommandBufferIterator it = first; it < last; ++it)
     {
         func(*it, vertex_count, instance_count, first_vertex, first_instance);
@@ -349,7 +352,7 @@ void DrawCallsDumpingContext::CmdDrawIndexed(const ApiCallInfo&   call_info,
     }
 
     CommandBufferIterator first, last;
-    GetDrawCallActiveCommandBuffers(first, last);
+    GetWorkCommandBuffers(first, last);
     for (CommandBufferIterator it = first; it < last; ++it)
     {
         func(*it, index_count, instance_count, first_index, vertex_offset, first_instance);
@@ -387,7 +390,7 @@ void DrawCallsDumpingContext::CmdDrawIndirect(const ApiCallInfo&      call_info,
     }
 
     CommandBufferIterator first, last;
-    GetDrawCallActiveCommandBuffers(first, last);
+    GetWorkCommandBuffers(first, last);
     for (CommandBufferIterator it = first; it < last; ++it)
     {
         func(*it, buffer_info->handle, offset, draw_count, stride);
@@ -424,7 +427,7 @@ void DrawCallsDumpingContext::CmdDrawIndexedIndirect(const ApiCallInfo&         
     }
 
     CommandBufferIterator first, last;
-    GetDrawCallActiveCommandBuffers(first, last);
+    GetWorkCommandBuffers(first, last);
     for (CommandBufferIterator it = first; it < last; ++it)
     {
         func(*it, buffer_info->handle, offset, draw_count, stride);
@@ -471,7 +474,7 @@ void DrawCallsDumpingContext::CmdDrawIndirectCount(const ApiCallInfo&           
     }
 
     CommandBufferIterator first, last;
-    GetDrawCallActiveCommandBuffers(first, last);
+    GetWorkCommandBuffers(first, last);
     for (CommandBufferIterator it = first; it < last; ++it)
     {
         func(*it, buffer_info->handle, offset, count_buffer_info->handle, count_buffer_offset, max_draw_count, stride);
@@ -518,7 +521,7 @@ void DrawCallsDumpingContext::CmdDrawIndexedIndirectCount(const ApiCallInfo&    
     }
 
     CommandBufferIterator first, last;
-    GetDrawCallActiveCommandBuffers(first, last);
+    GetWorkCommandBuffers(first, last);
     for (CommandBufferIterator it = first; it < last; ++it)
     {
         func(*it, buffer_info->handle, offset, count_buffer_info->handle, count_buffer_offset, max_draw_count, stride);
@@ -2673,7 +2676,8 @@ void DrawCallsDumpingContext::BindDescriptorSets(
     assert((dynamic_offset_index == dynamicOffsetCount && pDynamicOffsets != nullptr) || (!dynamic_offset_index));
 }
 
-VkResult DrawCallsDumpingContext::CloneRenderPass(const VkRenderPassCreateInfo* original_render_pass_ci)
+VkResult DrawCallsDumpingContext::CloneRenderPass(const VkRenderPassCreateInfo* original_render_pass_ci,
+                                                  bool                          load_variant)
 {
     std::vector<VkAttachmentDescription> modified_attachments(original_render_pass_ci->pAttachments,
                                                               original_render_pass_ci->pAttachments +
@@ -2689,10 +2693,18 @@ VkResult DrawCallsDumpingContext::CloneRenderPass(const VkRenderPassCreateInfo* 
         {
             att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
         }
+
+        if (load_variant)
+        {
+            att.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+            att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            att.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        }
     }
 
     // Create new render passes
-    std::vector<VkRenderPass>& new_render_pass = render_pass_clones_.emplace_back();
+    std::vector<VkRenderPass>& new_render_pass =
+        (load_variant ? render_pass_load_clones_ : render_pass_clones_).emplace_back();
     new_render_pass.resize(original_render_pass_ci->subpassCount);
 
     // Do one quick pass over the subpass references in order to check if the render pass
@@ -2825,7 +2837,8 @@ VkResult DrawCallsDumpingContext::CloneRenderPass(const VkRenderPassCreateInfo* 
 }
 
 VkResult DrawCallsDumpingContext::CloneRenderPass2(const VulkanRenderPassInfo*    render_pass_info,
-                                                   const VkRenderPassCreateInfo2* original_render_pass_ci)
+                                                   const VkRenderPassCreateInfo2* original_render_pass_ci,
+                                                   bool                           load_variant)
 {
     std::vector<VkAttachmentDescription2> modified_attachments(original_render_pass_ci->pAttachments,
                                                                original_render_pass_ci->pAttachments +
@@ -2841,10 +2854,18 @@ VkResult DrawCallsDumpingContext::CloneRenderPass2(const VulkanRenderPassInfo*  
         {
             att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
         }
+
+        if (load_variant)
+        {
+            att.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+            att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            att.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        }
     }
 
     // Create new render passes
-    std::vector<VkRenderPass>& new_render_pass = render_pass_clones_.emplace_back();
+    std::vector<VkRenderPass>& new_render_pass =
+        (load_variant ? render_pass_load_clones_ : render_pass_clones_).emplace_back();
     new_render_pass.resize(original_render_pass_ci->subpassCount);
 
     // Do one quick pass over the subpass references in order to check if the render pass
@@ -3198,15 +3219,29 @@ VkResult DrawCallsDumpingContext::BeginRenderPass(const VulkanRenderPassInfo*  r
             object_info_table_);
     }
 
+    const bool chaining_eligible = command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary &&
+                                   RP_indices_.size() == 1 && secondaries_.empty() && !options_.dump_resources_before;
+
     VkResult res;
     if (render_pass_info->func_version == VulkanRenderPassInfo::kCreateRenderPass)
     {
-        res = CloneRenderPass(reinterpret_cast<const VkRenderPassCreateInfo*>(render_pass_info->create_info.data()));
+        const auto* ci = reinterpret_cast<const VkRenderPassCreateInfo*>(render_pass_info->create_info.data());
+        load_chaining_active_ = chaining_eligible && ci->subpassCount == 1;
+        res                   = CloneRenderPass(ci, false);
+        if (res == VK_SUCCESS && load_chaining_active_)
+        {
+            res = CloneRenderPass(ci, true);
+        }
     }
     else
     {
-        res = CloneRenderPass2(render_pass_info,
-                               reinterpret_cast<const VkRenderPassCreateInfo2*>(render_pass_info->create_info.data()));
+        const auto* ci        = reinterpret_cast<const VkRenderPassCreateInfo2*>(render_pass_info->create_info.data());
+        load_chaining_active_ = chaining_eligible && ci->subpassCount == 1;
+        res                   = CloneRenderPass2(render_pass_info, ci, false);
+        if (res == VK_SUCCESS && load_chaining_active_)
+        {
+            res = CloneRenderPass2(render_pass_info, ci, true);
+        }
     }
 
     if (res != VK_SUCCESS)
@@ -3272,6 +3307,11 @@ VkResult DrawCallsDumpingContext::BeginRenderPass(const VulkanRenderPassInfo*  r
                 }
             }
         }
+        if (load_chaining_active_ && it != first)
+        {
+            modified_renderpass_begin_info.renderPass = render_pass_load_clones_[rp][sp];
+        }
+
         device_table_->CmdBeginRenderPass(*it, &modified_renderpass_begin_info, contents);
     }
 
@@ -3846,6 +3886,19 @@ uint32_t DrawCallsDumpingContext::GetDrawCallActiveCommandBuffers(CommandBufferI
     GFXRECON_ASSERT(current_cb_index_ <= command_buffers_.size());
     first = command_buffers_.begin() + static_cast<int>(current_cb_index_);
     last  = command_buffers_.end();
+    return GFXRECON_NARROWING_CAST(uint32_t, current_cb_index_);
+}
+
+uint32_t DrawCallsDumpingContext::GetWorkCommandBuffers(CommandBufferIterator& first, CommandBufferIterator& last) const
+{
+    if (!load_chaining_active_)
+    {
+        return GetDrawCallActiveCommandBuffers(first, last);
+    }
+
+    GFXRECON_ASSERT(current_cb_index_ <= command_buffers_.size());
+    first = command_buffers_.begin() + static_cast<int>(current_cb_index_);
+    last  = (current_cb_index_ < command_buffers_.size()) ? first + 1 : first;
     return GFXRECON_NARROWING_CAST(uint32_t, current_cb_index_);
 }
 
