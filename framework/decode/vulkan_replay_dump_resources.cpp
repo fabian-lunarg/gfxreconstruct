@@ -2263,8 +2263,12 @@ void VulkanReplayDumpResourcesBase::OverrideCmdExecuteCommands(const ApiCallInfo
             // When the primary LOAD-chains, each secondary's split command buffers are single-draw windows and the
             // render target carries forward through the chain. The accumulator (replaying all prior secondaries into
             // each window) and the "other primaries" fan-out (re-executing this secondary into every later primary)
-            // are the O(S*M^2) re-execution this avoids, so both are skipped.
-            const bool chaining = dc_primary_context->IsLoadChainingActive();
+            // are the O(S*M^2) re-execution this avoids, so both are skipped. A primary that has its own render pass
+            // chains via IsLoadChainingActive(); a primary that only executes (chaining) dynamic-rendering secondaries
+            // has no render pass of its own, so it chains when all its secondaries do.
+            const bool chaining =
+                dc_primary_context->IsLoadChainingActive() ||
+                (!dc_primary_context->HasRecordedOwnRenderPass() && dc_primary_context->AllSecondariesChainable());
 
             uint32_t                     finalized_primaries = 0;
             std::vector<VkCommandBuffer> accumulated_secondaries_command_buffers;

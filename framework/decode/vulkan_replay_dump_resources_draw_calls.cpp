@@ -160,8 +160,9 @@ void DrawCallsDumpingContext::Release()
     RP_indices_.clear();
     render_pass_dumped_descriptors_.clear();
 
-    current_renderpass_ = 0;
-    current_subpass_    = 0;
+    current_renderpass_       = 0;
+    current_subpass_          = 0;
+    recorded_own_render_pass_ = false;
     current_cb_index_   = 0;
 }
 
@@ -2585,10 +2586,10 @@ VkResult DrawCallsDumpingContext::BeginCommandBuffer(VulkanCommandBufferInfo*   
     GFXRECON_ASSERT(command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary ||
                     command_buffer_level_ == DumpResourcesCommandBufferLevel::kSecondary);
 
-    // A traditional-render-pass secondary (inherited renderPass) LOAD-chains its split command buffers, so each
-    // target draw is recorded once and the render target carries forward through the primary's chain. Dynamic-
-    // rendering secondaries (no inherited renderPass) keep the cumulative path. Detected here from the inheritance
-    // info because, unlike the primary, a traditional secondary never reaches BeginRenderPass.
+    // A traditional-render-pass secondary (inherited renderPass) never reaches BeginRenderPass, so its LOAD-chaining
+    // is enabled here from the inheritance info; its split command buffers then become single-draw windows that carry
+    // the render target forward through the primary's chain. A secondary that records its own dynamic-rendering scope
+    // sets its flag in BeginRendering instead, so it is not handled here.
     if (command_buffer_level_ == DumpResourcesCommandBufferLevel::kSecondary && begin_info != nullptr &&
         begin_info->pInheritanceInfo != nullptr &&
         begin_info->pInheritanceInfo->renderPass != VK_NULL_HANDLE && !options_.dump_resources_before)
@@ -3222,6 +3223,7 @@ VkResult DrawCallsDumpingContext::BeginRenderPass(const VulkanRenderPassInfo*  r
 
     current_render_pass_type_ = kRenderPass;
     current_subpass_          = 0;
+    recorded_own_render_pass_ = true;
     active_renderpass_        = render_pass_info;
     active_framebuffer_       = framebuffer_info;
 
@@ -4052,11 +4054,15 @@ void DrawCallsDumpingContext::BeginRendering(const std::vector<VulkanImageInfo*>
     }
 
     current_render_pass_type_ = kDynamicRendering;
+    recorded_own_render_pass_ = true;
 
     // Dynamic rendering is always single-subpass. Multi-pass relies on the per-window revert to the attachment layout
-    // plus the app's own inter-pass barriers (recorded into the windows) to carry render targets across passes.
-    load_chaining_active_ = command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary &&
-                            secondaries_.empty() && !options_.dump_resources_before;
+    // plus the app's own inter-pass barriers (recorded into the windows) to carry render targets across passes. A
+    // secondary that records its own dynamic-rendering scope chains the same way; its windows are executed once into
+    // the primary's chain (see OverrideCmdExecuteCommands).
+    load_chaining_active_ = (command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary ||
+                             command_buffer_level_ == DumpResourcesCommandBufferLevel::kSecondary) &&
+                            AllSecondariesChainable() && !options_.dump_resources_before;
 
     for (size_t i = 0; i < color_attachments.size(); ++i)
     {

@@ -138,9 +138,13 @@ class DrawCallsDumpingContext
 
     bool IsLoadChainingActive() const { return load_chaining_active_; }
 
-    // True when every assigned secondary is LOAD-chaining (i.e. traditional). A dynamic-rendering secondary does not
-    // chain, so a primary that executes one must keep the cumulative path.
+    // True when every assigned secondary is LOAD-chaining. A secondary that cannot chain (e.g. dump_resources_before)
+    // keeps the primary on the cumulative path.
     bool AllSecondariesChainable() const;
+
+    // True once this context recorded a render pass of its own (vs. only executing secondaries). Keeps a primary that
+    // has its own cumulative render pass from being forced onto the chaining path by chaining secondaries.
+    bool HasRecordedOwnRenderPass() const { return recorded_own_render_pass_; }
 
     bool ShouldHandleExecuteCommands(uint64_t index) const;
 
@@ -348,6 +352,7 @@ class DrawCallsDumpingContext
     // chaining engaging on only some passes of a multi-pass context cannot misalign the lookup.
     std::unordered_map<uint64_t, std::vector<VkRenderPass>> render_pass_load_clones_;
     bool                                                    load_chaining_active_;
+    bool                                                    recorded_own_render_pass_{ false };
 
     struct RenderPassAttachmentLayouts
     {
