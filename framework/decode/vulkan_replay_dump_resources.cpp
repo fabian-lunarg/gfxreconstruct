@@ -1773,16 +1773,25 @@ void VulkanReplayDumpResourcesBase::OverrideCmdBeginRendering(
                                        pRenderingInfo->GetPointer()->renderArea);
         }
 
-        CommandBufferIterator first, last;
-        dc_context->GetDrawCallActiveCommandBuffers(first, last);
-
         // When load-chaining is engaged, each target draw is recorded into its own command buffer and the render
         // target is carried forward through STORE/LOAD instead of re-executing the prior draws. The first command
         // buffer keeps each attachment's original loadOp; every continuation buffer resumes the pass with
         // LOAD_OP_LOAD. STORE is forced on every attachment so its contents survive readback and the next LOAD.
         const VkRenderingInfo* const original_info = pRenderingInfo->GetPointer();
 
-        const bool      chaining = should_handle && dc_context->IsLoadChainingActive();
+        const bool chaining = should_handle && dc_context->IsLoadChainingActive();
+
+        // Chained: record begin only into this pass's own command buffers; later passes get their own begin.
+        CommandBufferIterator first, last;
+        if (chaining)
+        {
+            dc_context->GetRenderPassCommandBufferRange(first, last);
+        }
+        else
+        {
+            dc_context->GetDrawCallActiveCommandBuffers(first, last);
+        }
+
         VkRenderingInfo first_info, cont_info;
 
         if (chaining)

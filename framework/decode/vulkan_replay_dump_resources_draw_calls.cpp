@@ -3545,12 +3545,19 @@ void DrawCallsDumpingContext::EndRenderPass()
 
 void DrawCallsDumpingContext::EndRendering()
 {
-    assert(current_render_pass_type_ == kDynamicRendering);
+    GFXRECON_ASSERT(current_render_pass_type_ == kDynamicRendering);
 
+    // Chained: end only this pass's own command buffers; later passes get their own end when entered.
     CommandBufferIterator first, last;
-    GetDrawCallActiveCommandBuffers(first, last);
-    size_t cmd_buf_idx = current_cb_index_;
-    for (auto it = first; it < last; ++it, ++cmd_buf_idx)
+    if (load_chaining_active_)
+    {
+        GetRenderPassCommandBufferRange(first, last);
+    }
+    else
+    {
+        GetDrawCallActiveCommandBuffers(first, last);
+    }
+    for (auto it = first; it < last; ++it)
     {
         device_table_->CmdEndRendering(*it);
     }
@@ -4046,9 +4053,10 @@ void DrawCallsDumpingContext::BeginRendering(const std::vector<VulkanImageInfo*>
 
     current_render_pass_type_ = kDynamicRendering;
 
-    // Dynamic rendering is always single-subpass, so the only gate is the primary/single-pass eligibility.
+    // Dynamic rendering is always single-subpass. Multi-pass relies on the per-window revert to the attachment layout
+    // plus the app's own inter-pass barriers (recorded into the windows) to carry render targets across passes.
     load_chaining_active_ = command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary &&
-                            RP_indices_.size() == 1 && secondaries_.empty() && !options_.dump_resources_before;
+                            secondaries_.empty() && !options_.dump_resources_before;
 
     for (size_t i = 0; i < color_attachments.size(); ++i)
     {
