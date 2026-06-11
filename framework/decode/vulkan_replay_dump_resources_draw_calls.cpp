@@ -2585,6 +2585,17 @@ VkResult DrawCallsDumpingContext::BeginCommandBuffer(VulkanCommandBufferInfo*   
     GFXRECON_ASSERT(command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary ||
                     command_buffer_level_ == DumpResourcesCommandBufferLevel::kSecondary);
 
+    // A traditional-render-pass secondary (inherited renderPass) LOAD-chains its split command buffers, so each
+    // target draw is recorded once and the render target carries forward through the primary's chain. Dynamic-
+    // rendering secondaries (no inherited renderPass) keep the cumulative path. Detected here from the inheritance
+    // info because, unlike the primary, a traditional secondary never reaches BeginRenderPass.
+    if (command_buffer_level_ == DumpResourcesCommandBufferLevel::kSecondary && begin_info != nullptr &&
+        begin_info->pInheritanceInfo != nullptr &&
+        begin_info->pInheritanceInfo->renderPass != VK_NULL_HANDLE && !options_.dump_resources_before)
+    {
+        load_chaining_active_ = true;
+    }
+
     const VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
                                           nullptr,
                                           cb_pool_info->handle,
@@ -3260,7 +3271,7 @@ VkResult DrawCallsDumpingContext::BeginRenderPass(const VulkanRenderPassInfo*  r
     }
 
     const bool chaining_eligible = command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary &&
-                                   secondaries_.empty() && !options_.dump_resources_before;
+                                   AllSecondariesChainable() && !options_.dump_resources_before;
 
     uint32_t subpass_count = 0;
     VkResult res;
@@ -4068,6 +4079,21 @@ void DrawCallsDumpingContext::AssignSecondary(uint64_t                          
 
     secondaries_[execute_commands_index].push_back(secondary_context);
     secondary_context->command_buffer_level_ = DumpResourcesCommandBufferLevel::kSecondary;
+}
+
+bool DrawCallsDumpingContext::AllSecondariesChainable() const
+{
+    for (const auto& secondary_contexts : secondaries_ | std::views::values)
+    {
+        for (const auto& secondary_context : secondary_contexts)
+        {
+            if (!secondary_context->load_chaining_active_ || !secondary_context->AllSecondariesChainable())
+            {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 uint32_t DrawCallsDumpingContext::RecaclulateCommandBuffers()

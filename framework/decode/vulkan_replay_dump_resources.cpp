@@ -2251,6 +2251,12 @@ void VulkanReplayDumpResourcesBase::OverrideCmdExecuteCommands(const ApiCallInfo
 
         if (dc_primary_context->ShouldHandleExecuteCommands(call_info.index))
         {
+            // When the primary LOAD-chains, each secondary's split command buffers are single-draw windows and the
+            // render target carries forward through the chain. The accumulator (replaying all prior secondaries into
+            // each window) and the "other primaries" fan-out (re-executing this secondary into every later primary)
+            // are the O(S*M^2) re-execution this avoids, so both are skipped.
+            const bool chaining = dc_primary_context->IsLoadChainingActive();
+
             uint32_t                     finalized_primaries = 0;
             std::vector<VkCommandBuffer> accumulated_secondaries_command_buffers;
             for (uint32_t i = 0; (i < commandBufferCount) && (finalized_primaries < primary_last - primary_first); ++i)
@@ -2269,26 +2275,33 @@ void VulkanReplayDumpResourcesBase::OverrideCmdExecuteCommands(const ApiCallInfo
                         {
                             // Each primary should execute the command buffer from the previous
                             // secondary contexts as well
-                            func(*(primary_first + finalized_primaries),
-                                 GFXRECON_NARROWING_CAST(uint32_t, accumulated_secondaries_command_buffers.size()),
-                                 accumulated_secondaries_command_buffers.data());
+                            if (!chaining)
+                            {
+                                func(*(primary_first + finalized_primaries),
+                                     GFXRECON_NARROWING_CAST(uint32_t, accumulated_secondaries_command_buffers.size()),
+                                     accumulated_secondaries_command_buffers.data());
+                            }
 
                             func(*(primary_first + finalized_primaries), 1, &secondaries_command_buffers[scb]);
                             dc_primary_context->MergeRenderPasses(*dc_secondary_context);
                             ++finalized_primaries;
                         }
 
-                        // Keep accumulating the command buffer from all secondary contexts
-                        accumulated_secondaries_command_buffers.insert(accumulated_secondaries_command_buffers.end(),
-                                                                       secondaries_command_buffers.begin(),
-                                                                       secondaries_command_buffers.end());
-
-                        // The other primaries need to execute this secondary as well
-                        for (CommandBufferIterator primary_it = (primary_first + finalized_primaries);
-                             primary_it < primary_last;
-                             ++primary_it)
+                        if (!chaining)
                         {
-                            func(*primary_it, 1, &pCommandBuffers[i]);
+                            // Keep accumulating the command buffer from all secondary contexts
+                            accumulated_secondaries_command_buffers.insert(
+                                accumulated_secondaries_command_buffers.end(),
+                                secondaries_command_buffers.begin(),
+                                secondaries_command_buffers.end());
+
+                            // The other primaries need to execute this secondary as well
+                            for (CommandBufferIterator primary_it = (primary_first + finalized_primaries);
+                                 primary_it < primary_last;
+                                 ++primary_it)
+                            {
+                                func(*primary_it, 1, &pCommandBuffers[i]);
+                            }
                         }
 
                         dc_primary_context->UpdateSecondaries(*dc_secondary_context.get(), call_info.index, i);

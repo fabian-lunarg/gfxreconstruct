@@ -138,6 +138,10 @@ class DrawCallsDumpingContext
 
     bool IsLoadChainingActive() const { return load_chaining_active_; }
 
+    // True when every assigned secondary is LOAD-chaining (i.e. traditional). A dynamic-rendering secondary does not
+    // chain, so a primary that executes one must keep the cumulative path.
+    bool AllSecondariesChainable() const;
+
     bool ShouldHandleExecuteCommands(uint64_t index) const;
 
     void BindDescriptorSets(VkPipelineBindPoint                                pipeline_bind_point,
