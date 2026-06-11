@@ -211,6 +211,9 @@ class DrawCallsDumpingContext
 
     uint32_t GetWorkCommandBuffers(CommandBufferIterator& first, CommandBufferIterator& last) const;
 
+    // Range of command buffers whose target draw belongs to the current render pass.
+    uint32_t GetRenderPassCommandBufferRange(CommandBufferIterator& first, CommandBufferIterator& last) const;
+
     VkResult DumpDrawCalls(VkQueue             queue,
                            const VkSubmitInfo& submit_info,
                            Index               submit_info_index,
@@ -336,14 +339,22 @@ class DrawCallsDumpingContext
     RenderPassType current_render_pass_type_;
 
     std::vector<std::vector<VkRenderPass>> render_pass_clones_;
-    std::vector<std::vector<VkRenderPass>> render_pass_load_clones_;
-    bool                                   load_chaining_active_;
+
+    // LOAD-variant clones, keyed by render pass index. A map (rather than an index-aligned vector) so that
+    // chaining engaging on only some passes of a multi-pass context cannot misalign the lookup.
+    std::unordered_map<uint64_t, std::vector<VkRenderPass>> render_pass_load_clones_;
+    bool                                                    load_chaining_active_;
 
     struct RenderPassAttachmentLayouts
     {
-        bool                       is_dynamic{ false };
+        bool is_dynamic{ false };
+        // Traditional pass recorded with LOAD-chaining; its render targets must be reconciled to their original
+        // finalLayouts after the last window so a following pass sees the layout normal execution would leave behind.
+        bool                       chained{ false };
         std::vector<VkImageLayout> color_attachment_layouts;
         VkImageLayout              depth_attachment_layout{ VK_IMAGE_LAYOUT_GENERAL };
+        std::vector<VkImageLayout> color_final_layouts;
+        VkImageLayout              depth_final_layout{ VK_IMAGE_LAYOUT_GENERAL };
     };
 
     std::unordered_map<uint32_t, RenderPassAttachmentLayouts> rendering_attachment_layouts_;
