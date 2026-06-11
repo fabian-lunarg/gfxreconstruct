@@ -3918,6 +3918,10 @@ void DrawCallsDumpingContext::BeginRendering(const std::vector<VulkanImageInfo*>
 
     current_render_pass_type_ = kDynamicRendering;
 
+    // Dynamic rendering is always single-subpass, so the only gate is the primary/single-pass eligibility.
+    load_chaining_active_ = command_buffer_level_ == DumpResourcesCommandBufferLevel::kPrimary &&
+                            RP_indices_.size() == 1 && secondaries_.empty() && !options_.dump_resources_before;
+
     for (size_t i = 0; i < color_attachments.size(); ++i)
     {
         color_attachments[i]->intermediate_layout = color_attachment_layouts[i];

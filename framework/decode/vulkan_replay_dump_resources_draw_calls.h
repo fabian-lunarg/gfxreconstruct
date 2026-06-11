@@ -136,6 +136,8 @@ class DrawCallsDumpingContext
 
     bool ShouldHandleRenderPass(uint64_t index) const;
 
+    bool IsLoadChainingActive() const { return load_chaining_active_; }
+
     bool ShouldHandleExecuteCommands(uint64_t index) const;
 
     void BindDescriptorSets(VkPipelineBindPoint                                pipeline_bind_point,

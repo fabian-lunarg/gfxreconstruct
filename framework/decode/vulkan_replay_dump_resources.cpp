@@ -1722,7 +1722,8 @@ void VulkanReplayDumpResourcesBase::OverrideCmdBeginRendering(
         FindDrawCallDumpingContexts(original_command_buffer);
     for (auto dc_context : dc_contexts)
     {
-        if (dc_context->ShouldHandleRenderPass(call_info.index))
+        const bool should_handle = dc_context->ShouldHandleRenderPass(call_info.index);
+        if (should_handle)
         {
             const auto   rendering_info_meta    = pRenderingInfo->GetMetaStructPointer();
             const size_t n_color_attachments    = rendering_info_meta->pColorAttachments->GetLength();
@@ -1774,9 +1775,70 @@ void VulkanReplayDumpResourcesBase::OverrideCmdBeginRendering(
 
         CommandBufferIterator first, last;
         dc_context->GetDrawCallActiveCommandBuffers(first, last);
+
+        // When load-chaining is engaged, each target draw is recorded into its own command buffer and the render
+        // target is carried forward through STORE/LOAD instead of re-executing the prior draws. The first command
+        // buffer keeps each attachment's original loadOp; every continuation buffer resumes the pass with
+        // LOAD_OP_LOAD. STORE is forced on every attachment so its contents survive readback and the next LOAD.
+        const VkRenderingInfo* const original_info = pRenderingInfo->GetPointer();
+
+        const bool      chaining = should_handle && dc_context->IsLoadChainingActive();
+        VkRenderingInfo first_info, cont_info;
+
+        if (chaining)
+        {
+            std::vector<VkRenderingAttachmentInfo> cont_color;
+            std::vector<VkRenderingAttachmentInfo> first_color;
+            VkRenderingAttachmentInfo              first_depth, cont_depth, first_stencil, cont_stencil;
+
+            const auto build = [&](bool                                    force_load,
+                                   VkRenderingInfo&                        info,
+                                   std::vector<VkRenderingAttachmentInfo>& color,
+                                   VkRenderingAttachmentInfo&              depth,
+                                   VkRenderingAttachmentInfo&              stencil) {
+                const auto force_ops = [&](VkRenderingAttachmentInfo& att) {
+                    if (force_load)
+                    {
+                        att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+                    }
+                    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                };
+
+                info = *original_info;
+                color.assign(original_info->pColorAttachments,
+                             original_info->pColorAttachments + original_info->colorAttachmentCount);
+                for (auto& att : color)
+                {
+                    force_ops(att);
+                }
+                info.pColorAttachments = color.data();
+
+                if (original_info->pDepthAttachment != nullptr)
+                {
+                    depth = *original_info->pDepthAttachment;
+                    force_ops(depth);
+                    info.pDepthAttachment = &depth;
+                }
+                if (original_info->pStencilAttachment != nullptr)
+                {
+                    stencil = *original_info->pStencilAttachment;
+                    force_ops(stencil);
+                    info.pStencilAttachment = &stencil;
+                }
+            };
+
+            build(false, first_info, first_color, first_depth, first_stencil);
+            build(true, cont_info, cont_color, cont_depth, cont_stencil);
+        }
+
         for (CommandBufferIterator it = first; it < last; ++it)
         {
-            func(*it, pRenderingInfo->GetPointer());
+            const VkRenderingInfo* info = original_info;
+            if (chaining)
+            {
+                info = (it == first) ? &first_info : &cont_info;
+            }
+            func(*it, info);
         }
     }
 
