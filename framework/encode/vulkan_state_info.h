@@ -81,6 +81,7 @@ struct DescriptorInfo
     std::unique_ptr<VkBufferView[]>               uniform_texel_buffer_views;
     std::unique_ptr<VkBufferView[]>               storage_texel_buffer_views;
     std::unique_ptr<VkAccelerationStructureKHR[]> acceleration_structures;
+    std::unique_ptr<VkTensorViewARM[]>            tensor_views;
     std::unique_ptr<uint8_t[]>                    inline_uniform_block;
     std::unique_ptr<VkDescriptorType[]>           mutable_type;
 };
@@ -171,6 +172,7 @@ enum PipelineBindPoints
     kBindPoint_graphics = 0,
     kBindPoint_compute,
     kBindPoint_ray_tracing,
+    kBindPoint_data_graph,
 
     kBindPoint_count
 };
@@ -185,6 +187,8 @@ static PipelineBindPoints VkPipelinePointToPipelinePoint(VkPipelineBindPoint bin
             return kBindPoint_compute;
         case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR:
             return kBindPoint_ray_tracing;
+        case VK_PIPELINE_BIND_POINT_DATA_GRAPH_ARM:
+            return kBindPoint_data_graph;
         default:
             GFXRECON_LOG_ERROR("Unrecognized/unsupported pipeline binding point (%u)", bind_point);
             assert(0);
