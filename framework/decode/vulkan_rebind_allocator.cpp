@@ -620,6 +620,107 @@ void VulkanRebindAllocator::FreeMemory(VkDeviceMemory               memory,
     }
 }
 
+bool VulkanRebindAllocator::ClassifyReproduceLayout(VkDeviceSize                memory_allocation_size,
+                                                    VkDeviceSize                memory_offset,
+                                                    const VkMemoryRequirements& capture_req,
+                                                    const VkMemoryRequirements& replay_req) const
+{
+    // Bound inside a larger allocation -> the memory is shared/suballocated.
+    if (memory_offset > 0)
+    {
+        return true;
+    }
+
+    // Footprint unknown (vkGet*MemoryRequirements never queried at capture, e.g. suballocation
+    // pools): the safe direction is the block path (over-allocate, never corrupt).
+    if (capture_req.size == 0)
+    {
+        return true;
+    }
+
+    // >=2x slack over the single resource's replay footprint => room for another resource.
+    if (replay_req.size != 0 && memory_allocation_size >= 2 * replay_req.size)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+VkResult VulkanRebindAllocator::GetOrCreateBlockMemoryInfo(MemoryAllocInfo&               memory_alloc_info,
+                                                           VkDeviceSize                   memory_offset,
+                                                           const VkMemoryRequirements&    replay_req,
+                                                           const VmaAllocationCreateInfo& create_info,
+                                                           VmaMemoryInfo**                vma_mem_info)
+{
+    // First shared bind: allocate one block sized to the whole captured memory, placed at
+    // offset_from_original_device_memory == 0 so every resource binds at its captured offset.
+    if (memory_alloc_info.block_mem_info == nullptr)
+    {
+        VkMemoryRequirements block_req = {};
+        block_req.size           = std::max(memory_alloc_info.allocation_size, memory_offset + replay_req.size);
+        block_req.alignment      = replay_req.alignment;
+        block_req.memoryTypeBits = replay_req.memoryTypeBits;
+
+        VmaMemoryInfo mem_info                      = {};
+        mem_info.memory_info                        = &memory_alloc_info;
+        mem_info.capture_mem_req                    = block_req;
+        mem_info.replay_mem_req                     = block_req;
+        mem_info.alc_create_info                    = create_info;
+        mem_info.offset_from_original_device_memory = 0;
+
+        auto result = allocator_->AllocateMemory(block_req,
+                                                 false,
+                                                 false,
+                                                 VK_NULL_HANDLE,
+                                                 VK_NULL_HANDLE,
+                                                 VmaBufferImageUsage::UNKNOWN,
+                                                 create_info,
+                                                 VmaSuballocationType::VMA_SUBALLOCATION_TYPE_FREE,
+                                                 1,
+                                                 &mem_info.allocation);
+        if (result < 0)
+        {
+            GFXRECON_LOG_WARNING("Rebind reproduce-layout: failed to allocate shared block of size %" PRIu64 ": %s",
+                                 block_req.size,
+                                 util::ToString<VkResult>(result).c_str());
+            return result;
+        }
+
+        allocator_->GetAllocationInfo(mem_info.allocation, &mem_info.allocation_info);
+        memory_alloc_info.vma_mem_infos.emplace_back(std::make_unique<VmaMemoryInfo>(mem_info));
+        memory_alloc_info.block_mem_info = memory_alloc_info.vma_mem_infos.back().get();
+    }
+
+    VmaMemoryInfo* block = memory_alloc_info.block_mem_info;
+
+    // A VmaAllocation cannot be grown: a resource whose captured offset + replay size exceeds the
+    // block doesn't fit (replay-size inflation / alignment rounding at a high offset). Warn rather
+    // than mis-place.
+    if (memory_offset + replay_req.size > block->replay_mem_req.size)
+    {
+        GFXRECON_LOG_WARNING("Rebind reproduce-layout: resource at offset %" PRIu64 " (size %" PRIu64
+                             ") exceeds shared block size %" PRIu64 "; skipping bind.",
+                             memory_offset,
+                             replay_req.size,
+                             block->replay_mem_req.size);
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+
+    // The captured offset must satisfy the replay resource's alignment.
+    if (replay_req.alignment != 0 && (memory_offset % replay_req.alignment) != 0)
+    {
+        GFXRECON_LOG_WARNING("Rebind reproduce-layout: captured offset %" PRIu64
+                             " does not satisfy replay alignment %" PRIu64 "; skipping bind.",
+                             memory_offset,
+                             replay_req.alignment);
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+
+    *vma_mem_info = block;
+    return VK_SUCCESS;
+}
+
 VkResult
 VulkanRebindAllocator::AllocateMemoryForBuffer(VkBuffer                                buffer,
                                                VkDeviceSize                            memory_offset,
@@ -653,6 +754,18 @@ VulkanRebindAllocator::AllocateMemoryForBuffer(VkBuffer                         
     create_info.memoryTypeBits = 0;
     create_info.pool           = VK_NULL_HANDLE;
     create_info.pUserData      = nullptr;
+
+    if (memory_alloc_info.reproduce_layout == ReproduceLayout::kUnknown)
+    {
+        memory_alloc_info.reproduce_layout =
+            ClassifyReproduceLayout(memory_alloc_info.allocation_size, memory_offset, capture_req, replay_req)
+                ? ReproduceLayout::kYes
+                : ReproduceLayout::kNo;
+    }
+    if (memory_alloc_info.reproduce_layout == ReproduceLayout::kYes)
+    {
+        return GetOrCreateBlockMemoryInfo(memory_alloc_info, memory_offset, replay_req, create_info, vma_mem_info);
+    }
 
     if (FindVmaMemoryInfo(memory_alloc_info,
                           memory_offset,
@@ -949,6 +1062,18 @@ VkResult VulkanRebindAllocator::AllocateMemoryForImage(VkImage                  
     create_info.memoryTypeBits = 0;
     create_info.pool           = VK_NULL_HANDLE;
     create_info.pUserData      = nullptr;
+
+    if (memory_alloc_info.reproduce_layout == ReproduceLayout::kUnknown)
+    {
+        memory_alloc_info.reproduce_layout =
+            ClassifyReproduceLayout(memory_alloc_info.allocation_size, memory_offset, capture_req, replay_req)
+                ? ReproduceLayout::kYes
+                : ReproduceLayout::kNo;
+    }
+    if (memory_alloc_info.reproduce_layout == ReproduceLayout::kYes)
+    {
+        return GetOrCreateBlockMemoryInfo(memory_alloc_info, memory_offset, replay_req, create_info, vma_mem_info);
+    }
 
     if (FindVmaMemoryInfo(memory_alloc_info,
                           memory_offset,
@@ -3495,6 +3620,18 @@ VulkanRebindAllocator::AllocateMemoryForTensor(VkTensorARM                      
     create_info.pool           = VK_NULL_HANDLE;
     create_info.pUserData      = nullptr;
 
+    if (memory_alloc_info.reproduce_layout == ReproduceLayout::kUnknown)
+    {
+        memory_alloc_info.reproduce_layout =
+            ClassifyReproduceLayout(memory_alloc_info.allocation_size, memory_offset, capture_req, replay_req)
+                ? ReproduceLayout::kYes
+                : ReproduceLayout::kNo;
+    }
+    if (memory_alloc_info.reproduce_layout == ReproduceLayout::kYes)
+    {
+        return GetOrCreateBlockMemoryInfo(memory_alloc_info, memory_offset, replay_req, create_info, vma_mem_info);
+    }
+
     if (FindVmaMemoryInfo(memory_alloc_info,
                           memory_offset,
                           capture_req,
@@ -3850,10 +3987,13 @@ VkResult VulkanRebindAllocator::BindTensorMemory(uint32_t                       
                                         *vma_mem_info,
                                         bind_memory_properties[i]);
                     }
-                    else if (memory_alloc_info->vma_mem_infos.size() > vma_count_before)
+                    else if (memory_alloc_info->vma_mem_infos.size() > vma_count_before &&
+                             vma_mem_info != memory_alloc_info->block_mem_info)
                     {
-                        // AllocateMemoryForTensor made a new VMA allocation that was never
-                        // successfully bound; free it now to avoid a leak.
+                        // AllocateMemoryForTensor made a new per-resource VMA allocation that was
+                        // never successfully bound; free it now to avoid a leak. The shared
+                        // reproduce-layout block is kept: it persists across binds and a later
+                        // resource may still bind into it.
                         vmaFreeMemory(allocator_, vma_mem_info->allocation);
                         memory_alloc_info->vma_mem_infos.pop_back();
                     }

@@ -573,11 +573,22 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
         std::vector<SubresourceLayouts> layouts;
     };
 
+    // Decided on first bind to a captured VkDeviceMemory: whether to reproduce the captured
+    // layout in a single shared replay block (kYes) or keep the lean per-resource repack (kNo).
+    enum class ReproduceLayout
+    {
+        kUnknown,
+        kYes,
+        kNo
+    };
+
     struct MemoryAllocInfo
     {
         format::HandleId                                 capture_id{ format::kNullHandleId };
         VkDeviceSize                                     allocation_size{ 0 };
         uint32_t                                         original_index{ std::numeric_limits<uint32_t>::max() };
+        ReproduceLayout                                  reproduce_layout{ ReproduceLayout::kUnknown };
+        VmaMemoryInfo*                                   block_mem_info{ nullptr };
         bool                                             is_mapped{ false };
         VkDeviceSize                                     mapped_offset{ 0 };
         AHardwareBuffer*                                 ahb{ nullptr };
@@ -715,6 +726,22 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
                                      ResourceAllocInfo&                      resource_alloc_info,
                                      MemoryAllocInfo&                        memory_alloc_info,
                                      VmaMemoryInfo**                         vma_mem_info);
+
+    // First-bind classifier: decide whether a captured VkDeviceMemory is a shared/suballocated
+    // block (reproduce its layout) or a dedicated allocation (lean per-resource repack).
+    bool ClassifyReproduceLayout(VkDeviceSize                memory_allocation_size,
+                                 VkDeviceSize                memory_offset,
+                                 const VkMemoryRequirements& capture_req,
+                                 const VkMemoryRequirements& replay_req) const;
+
+    // Allocate (first shared bind) or return (later binds) the single replay block for a memory
+    // classified as reproduce-layout. The block has offset_from_original_device_memory == 0, so
+    // each resource binds at its captured relative offset.
+    VkResult GetOrCreateBlockMemoryInfo(MemoryAllocInfo&               memory_alloc_info,
+                                        VkDeviceSize                   memory_offset,
+                                        const VkMemoryRequirements&    replay_req,
+                                        const VmaAllocationCreateInfo& create_info,
+                                        VmaMemoryInfo**                vma_mem_info);
 
     // If it's bind by vma function, like vmaBindBufferMemory2, vmaBindBufferImage2, get the offset from it.
     VkDeviceSize GetRebindOffsetFromVMA(VkDeviceSize original_offset, const VmaMemoryInfo& vma_mem_info);
