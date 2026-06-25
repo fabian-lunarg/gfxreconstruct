@@ -564,6 +564,11 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
         bool          uses_extensions{ false };
         VkFormat      format{ VK_FORMAT_UNDEFINED };
 
+        // Captured VkBufferCreateInfo::size. Always present in the stream (unlike the memory
+        // requirement size, which is 0 when vkGetBufferMemoryRequirements was never captured), so it
+        // provides a captured-space byte-extent for aliasing-overlap detection. 0 for non-buffers.
+        VkDeviceSize create_size{ 0 };
+
         std::string          debug_utils_name;
         std::vector<uint8_t> debug_utils_tag;
         uint64_t             debug_utils_tag_name;
@@ -573,13 +578,15 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
         std::vector<SubresourceLayouts> layouts;
     };
 
-    // Decided on first bind to a captured VkDeviceMemory: whether to reproduce the captured
-    // layout in a single shared replay block (kYes) or keep the lean per-resource repack (kNo).
-    enum class ReproduceLayout
+    // One resource bound to a captured VkDeviceMemory at a captured offset. Tracked per memory so a
+    // later bind can detect aliasing (its captured range overlapping an earlier one) and share the
+    // earlier resource's allocation instead of repacking into a separate one.
+    struct BoundResourceRange
     {
-        kUnknown,
-        kYes,
-        kNo
+        uint64_t       object_handle{ 0 };
+        VkDeviceSize   offset{ 0 };               // captured memoryOffset
+        VkDeviceSize   footprint{ 0 };            // captured byte-extent (capture_req.size, else create_size)
+        VmaMemoryInfo* vma_mem_info{ nullptr };   // allocation this resource landed in
     };
 
     struct MemoryAllocInfo
@@ -587,8 +594,7 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
         format::HandleId                                 capture_id{ format::kNullHandleId };
         VkDeviceSize                                     allocation_size{ 0 };
         uint32_t                                         original_index{ std::numeric_limits<uint32_t>::max() };
-        ReproduceLayout                                  reproduce_layout{ ReproduceLayout::kUnknown };
-        VmaMemoryInfo*                                   block_mem_info{ nullptr };
+        std::vector<BoundResourceRange>                  bound_ranges;
         bool                                             is_mapped{ false };
         VkDeviceSize                                     mapped_offset{ 0 };
         AHardwareBuffer*                                 ahb{ nullptr };
@@ -727,21 +733,15 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
                                      MemoryAllocInfo&                        memory_alloc_info,
                                      VmaMemoryInfo**                         vma_mem_info);
 
-    // First-bind classifier: decide whether a captured VkDeviceMemory is a shared/suballocated
-    // block (reproduce its layout) or a dedicated allocation (lean per-resource repack).
-    bool ClassifyReproduceLayout(VkDeviceSize                memory_allocation_size,
-                                 VkDeviceSize                memory_offset,
-                                 const VkMemoryRequirements& capture_req,
-                                 const VkMemoryRequirements& replay_req) const;
-
-    // Allocate (first shared bind) or return (later binds) the single replay block for a memory
-    // classified as reproduce-layout. The block has offset_from_original_device_memory == 0, so
-    // each resource binds at its captured relative offset.
-    VkResult GetOrCreateBlockMemoryInfo(MemoryAllocInfo&               memory_alloc_info,
-                                        VkDeviceSize                   memory_offset,
-                                        const VkMemoryRequirements&    replay_req,
-                                        const VmaAllocationCreateInfo& create_info,
-                                        VmaMemoryInfo**                vma_mem_info);
+    // Aliasing detection: if the resource's captured range [memory_offset, memory_offset+footprint)
+    // overlaps a resource already bound to this memory, the two alias. Returns that incumbent's
+    // VmaMemoryInfo so the newcomer binds into the same allocation at its captured relative offset;
+    // the existing GetRebindOffsetFromVMA math then places it. Returns nullptr when there is no
+    // overlap (use the per-resource path) or when the alias cannot be reproduced (warns).
+    VmaMemoryInfo* FindAliasedMemoryInfo(MemoryAllocInfo&            memory_alloc_info,
+                                         VkDeviceSize                memory_offset,
+                                         VkDeviceSize                footprint,
+                                         const VkMemoryRequirements& replay_req);
 
     // If it's bind by vma function, like vmaBindBufferMemory2, vmaBindBufferImage2, get the offset from it.
     VkDeviceSize GetRebindOffsetFromVMA(VkDeviceSize original_offset, const VmaMemoryInfo& vma_mem_info);
