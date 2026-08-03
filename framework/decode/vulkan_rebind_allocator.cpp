@@ -627,7 +627,9 @@ VulkanRebindAllocator::FindAliasedMemoryInfo(const MemoryAllocInfo&      memory_
                                              VkDeviceSize                footprint,
                                              const VkMemoryRequirements& replay_req,
                                              bool                        requires_dedicated_allocation,
-                                             bool                        prefers_dedicated_allocation)
+                                             bool                        prefers_dedicated_allocation,
+                                             VkObjectType                new_object_type,
+                                             uint64_t                    new_object_handle)
 {
     // Without a captured byte-extent we cannot test overlap (e.g. a size-0 image with no
     // create_size proxy); fall back to the per-resource path.
@@ -729,6 +731,29 @@ VulkanRebindAllocator::FindAliasedMemoryInfo(const MemoryAllocInfo&      memory_
             return nullptr;
         }
 
+        // TEMP-INSTRUMENTATION (LunarG/Projects#1202): make successful joins visible in the CI
+        // warning summary, which collapses identical messages and prints a count per distinct one.
+        // mem/new_off/exist_off are capture-space and therefore comparable between the stage-1
+        // recapture and the stage-2 trim replay; new_obj/exist_obj are replay handles, useful only
+        // for correlating entries within a single run.
+        GFXRECON_LOG_WARNING("ALIAS-JOIN mem=%" PRIu64 " new_off=%" PRIu64 " exist_off=%" PRIu64 " new_obj=%" PRIu64
+                             " exist_obj=%" PRIu64 " new_type=%u existing_type=%u local=%" PRIu64
+                             " new_replay_size=%" PRIu64 " existing_replay_size=%" PRIu64 " new_footprint=%" PRIu64
+                             " existing_footprint=%" PRIu64 " host_visible=%d original_content=%d",
+                             static_cast<uint64_t>(memory_alloc_info.capture_id),
+                             memory_offset,
+                             range.offset,
+                             new_object_handle,
+                             range.object_handle,
+                             static_cast<uint32_t>(new_object_type),
+                             static_cast<uint32_t>(range.object_type),
+                             local,
+                             replay_req.size,
+                             existing->replay_mem_req.size,
+                             footprint,
+                             range.footprint,
+                             existing->is_host_visible ? 1 : 0,
+                             memory_alloc_info.original_content != nullptr ? 1 : 0);
         return existing;
     }
     return nullptr;
@@ -829,10 +854,12 @@ VulkanRebindAllocator::AllocateMemoryForBuffer(VkBuffer                         
                                                        footprint,
                                                        replay_req,
                                                        requires_dedicated_allocation,
-                                                       prefers_dedicated_allocation))
+                                                       prefers_dedicated_allocation,
+                                                       VK_OBJECT_TYPE_BUFFER,
+                                                       VK_HANDLE_TO_UINT64(buffer)))
     {
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(buffer), memory_offset, footprint, aliased, replay_req.size });
+            { VK_HANDLE_TO_UINT64(buffer), memory_offset, footprint, aliased, replay_req.size, VK_OBJECT_TYPE_BUFFER });
         *vma_mem_info = aliased;
         return VK_SUCCESS;
     }
@@ -847,7 +874,8 @@ VulkanRebindAllocator::AllocateMemoryForBuffer(VkBuffer                         
                           vma_mem_info))
     {
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(buffer), memory_offset, footprint, *vma_mem_info, replay_req.size });
+            { VK_HANDLE_TO_UINT64(buffer), memory_offset, footprint, *vma_mem_info,
+              replay_req.size, VK_OBJECT_TYPE_BUFFER });
         return VK_SUCCESS;
     }
 
@@ -868,7 +896,8 @@ VulkanRebindAllocator::AllocateMemoryForBuffer(VkBuffer                         
         memory_alloc_info.vma_mem_infos.emplace_back(std::make_unique<VmaMemoryInfo>(mem_info));
         *vma_mem_info = memory_alloc_info.vma_mem_infos.back().get();
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(buffer), memory_offset, footprint, *vma_mem_info, replay_req.size });
+            { VK_HANDLE_TO_UINT64(buffer), memory_offset, footprint, *vma_mem_info,
+              replay_req.size, VK_OBJECT_TYPE_BUFFER });
     }
     return result;
 }
@@ -1154,10 +1183,12 @@ VkResult VulkanRebindAllocator::AllocateMemoryForImage(VkImage                  
                                                        footprint,
                                                        replay_req,
                                                        requires_dedicated_allocation,
-                                                       prefers_dedicated_allocation))
+                                                       prefers_dedicated_allocation,
+                                                       VK_OBJECT_TYPE_IMAGE,
+                                                       VK_HANDLE_TO_UINT64(image)))
     {
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(image), memory_offset, footprint, aliased, replay_req.size });
+            { VK_HANDLE_TO_UINT64(image), memory_offset, footprint, aliased, replay_req.size, VK_OBJECT_TYPE_IMAGE });
         *vma_mem_info = aliased;
         return VK_SUCCESS;
     }
@@ -1172,7 +1203,8 @@ VkResult VulkanRebindAllocator::AllocateMemoryForImage(VkImage                  
                           vma_mem_info))
     {
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(image), memory_offset, footprint, *vma_mem_info, replay_req.size });
+            { VK_HANDLE_TO_UINT64(image), memory_offset, footprint, *vma_mem_info,
+              replay_req.size, VK_OBJECT_TYPE_IMAGE });
         return VK_SUCCESS;
     }
 
@@ -1193,7 +1225,8 @@ VkResult VulkanRebindAllocator::AllocateMemoryForImage(VkImage                  
         memory_alloc_info.vma_mem_infos.emplace_back(std::make_unique<VmaMemoryInfo>(mem_info));
         *vma_mem_info = memory_alloc_info.vma_mem_infos.back().get();
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(image), memory_offset, footprint, *vma_mem_info, replay_req.size });
+            { VK_HANDLE_TO_UINT64(image), memory_offset, footprint, *vma_mem_info,
+              replay_req.size, VK_OBJECT_TYPE_IMAGE });
     }
     return result;
 }
@@ -3731,10 +3764,13 @@ VulkanRebindAllocator::AllocateMemoryForTensor(VkTensorARM                      
                                                        footprint,
                                                        replay_req,
                                                        requires_dedicated_allocation,
-                                                       prefers_dedicated_allocation))
+                                                       prefers_dedicated_allocation,
+                                                       VK_OBJECT_TYPE_TENSOR_ARM,
+                                                       VK_HANDLE_TO_UINT64(tensor)))
     {
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(tensor), memory_offset, footprint, aliased, replay_req.size });
+            { VK_HANDLE_TO_UINT64(tensor), memory_offset, footprint, aliased,
+              replay_req.size, VK_OBJECT_TYPE_TENSOR_ARM });
         *vma_mem_info = aliased;
         return VK_SUCCESS;
     }
@@ -3749,7 +3785,8 @@ VulkanRebindAllocator::AllocateMemoryForTensor(VkTensorARM                      
                           vma_mem_info))
     {
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(tensor), memory_offset, footprint, *vma_mem_info, replay_req.size });
+            { VK_HANDLE_TO_UINT64(tensor), memory_offset, footprint, *vma_mem_info,
+              replay_req.size, VK_OBJECT_TYPE_TENSOR_ARM });
         return VK_SUCCESS;
     }
 
@@ -3770,7 +3807,8 @@ VulkanRebindAllocator::AllocateMemoryForTensor(VkTensorARM                      
         memory_alloc_info.vma_mem_infos.emplace_back(std::make_unique<VmaMemoryInfo>(mem_info));
         *vma_mem_info = memory_alloc_info.vma_mem_infos.back().get();
         memory_alloc_info.bound_ranges.push_back(
-            { VK_HANDLE_TO_UINT64(tensor), memory_offset, footprint, *vma_mem_info, replay_req.size });
+            { VK_HANDLE_TO_UINT64(tensor), memory_offset, footprint, *vma_mem_info,
+              replay_req.size, VK_OBJECT_TYPE_TENSOR_ARM });
     }
     return result;
 }

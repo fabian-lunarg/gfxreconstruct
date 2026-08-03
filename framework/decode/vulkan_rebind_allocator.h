@@ -588,6 +588,7 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
         VkDeviceSize   footprint{ 0 };          // captured byte-extent (capture_req.size, else create_size)
         VmaMemoryInfo* vma_mem_info{ nullptr }; // allocation this resource landed in
         VkDeviceSize   replay_size{ 0 };        // replay byte-extent (replay_req.size) inside that allocation
+        VkObjectType   object_type{ VK_OBJECT_TYPE_UNKNOWN }; // TEMP-INSTRUMENTATION
     };
 
     struct MemoryAllocInfo
@@ -744,7 +745,9 @@ class VulkanRebindAllocator : public VulkanResourceAllocator
                                          VkDeviceSize                footprint,
                                          const VkMemoryRequirements& replay_req,
                                          bool                        requires_dedicated_allocation,
-                                         bool                        prefers_dedicated_allocation);
+                                         bool                        prefers_dedicated_allocation,
+                                         VkObjectType                new_object_type,
+                                         uint64_t                    new_object_handle);
 
     // True if placing a resource at [local, local + replay_size) inside an allocation would overlap
     // a resource already bound there that it does not alias in the capture. Replay sizes differ from
