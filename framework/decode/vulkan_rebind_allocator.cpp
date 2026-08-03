@@ -631,6 +631,29 @@ VulkanRebindAllocator::FindAliasedMemoryInfo(const MemoryAllocInfo&      memory_
                                              VkObjectType                new_object_type,
                                              uint64_t                    new_object_handle)
 {
+    // TEMP-INSTRUMENTATION: per-guard kill switches, so one build covers every configuration.
+    //   GFXR_ALIAS_DISABLE=1        no aliasing at all (= Locke's "return nullptr" / pre-#3100)
+    //   GFXR_ALIAS_DEV_BASELINE=1   pre-PR-#3141 `dev` behaviour (all four commits' effects off)
+    //   GFXR_ALIAS_NO_IMAGE=1       reject image newcomers (diagnostic)
+    //   GFXR_ALIAS_OFF_VMA_DEDICATED=1  fall back to the requires/prefers flags
+    //   GFXR_ALIAS_OFF_SIBLING=1        drop the replay-space collision guard
+    static const bool alias_disabled = (util::platform::GetEnv("GFXR_ALIAS_DISABLE") == "1");
+    if (alias_disabled)
+    {
+        return nullptr;
+    }
+
+    static const bool dev_baseline = (util::platform::GetEnv("GFXR_ALIAS_DEV_BASELINE") == "1");
+    static const bool no_image     = (util::platform::GetEnv("GFXR_ALIAS_NO_IMAGE") == "1");
+    static const bool off_vma_dedicated =
+        dev_baseline || (util::platform::GetEnv("GFXR_ALIAS_OFF_VMA_DEDICATED") == "1");
+    static const bool off_sibling = dev_baseline || (util::platform::GetEnv("GFXR_ALIAS_OFF_SIBLING") == "1");
+
+    if (no_image && new_object_type == VK_OBJECT_TYPE_IMAGE)
+    {
+        return nullptr;
+    }
+
     // Without a captured byte-extent we cannot test overlap (e.g. a size-0 image with no
     // create_size proxy); fall back to the per-resource path.
     if (footprint == 0)
@@ -660,11 +683,15 @@ VulkanRebindAllocator::FindAliasedMemoryInfo(const MemoryAllocInfo&      memory_
         // VMA 'can' create dedicated blocks with neither 'prefers/requires dedicated' flag set.
         // -> query the VMA-allocation
         VmaAllocationInfo2 existing_info{};
-        if (existing->allocation != VK_NULL_HANDLE)
+        if (!off_vma_dedicated && existing->allocation != VK_NULL_HANDLE)
         {
             vmaGetAllocationInfo2(allocator_, existing->allocation, &existing_info);
         }
-        if (existing_info.dedicatedMemory == VK_TRUE)
+        // TEMP-INSTRUMENTATION: with the VMA query off, fall back to the flags -- and under
+        // GFXR_ALIAS_DEV_BASELINE reproduce `dev`, whose existing-side branch fell through.
+        if (off_vma_dedicated
+                ? (!dev_baseline && (existing->requires_dedicated_allocation || existing->prefers_dedicated_allocation))
+                : (existing_info.dedicatedMemory == VK_TRUE))
         {
             GFXRECON_LOG_WARNING("Rebind aliasing: the aliased resource holds a dedicated allocation at replay. "
                                  "cannot reproduce the share.");
@@ -672,7 +699,7 @@ VulkanRebindAllocator::FindAliasedMemoryInfo(const MemoryAllocInfo&      memory_
         }
 
         // The newcomer gets its own dedicated allocation at replay and therefore cannot share the existing memory.
-        if (requires_dedicated_allocation || prefers_dedicated_allocation)
+        if (requires_dedicated_allocation || (!dev_baseline && prefers_dedicated_allocation))
         {
             GFXRECON_LOG_WARNING(
                 "Rebind aliasing: a dedicated allocation is required at replay. cannot reproduce the share.");
@@ -726,7 +753,8 @@ VulkanRebindAllocator::FindAliasedMemoryInfo(const MemoryAllocInfo&      memory_
         }
 
         // avoid unintended aliasing
-        if (OverlapsUnaliasedResource(memory_alloc_info, existing, memory_offset, footprint, local, replay_req.size))
+        if (!off_sibling &&
+            OverlapsUnaliasedResource(memory_alloc_info, existing, memory_offset, footprint, local, replay_req.size))
         {
             return nullptr;
         }
@@ -845,9 +873,13 @@ VulkanRebindAllocator::AllocateMemoryForBuffer(VkBuffer                         
     // The captured byte-extent, used to detect aliasing. Prefer the smaller of requirement- and
     // create-size: page-guard tracking rewrites the recorded requirement to a page multiple (a
     // 168-byte buffer can read as 65536), which would overlap every neighbour within that page.
-    const VkDeviceSize footprint = (capture_req.size > 0 && resource_alloc_info.create_size > 0)
-                                       ? std::min(capture_req.size, resource_alloc_info.create_size)
-                                       : std::max(capture_req.size, resource_alloc_info.create_size);
+    // TEMP-INSTRUMENTATION: GFXR_ALIAS_DEV_BASELINE=1 restores the pre-fix (dev) footprint.
+    static const bool  fp_dev_baseline = (util::platform::GetEnv("GFXR_ALIAS_DEV_BASELINE") == "1");
+    const VkDeviceSize footprint =
+        fp_dev_baseline ? (capture_req.size > 0 ? capture_req.size : resource_alloc_info.create_size)
+                        : ((capture_req.size > 0 && resource_alloc_info.create_size > 0)
+                               ? std::min(capture_req.size, resource_alloc_info.create_size)
+                               : std::max(capture_req.size, resource_alloc_info.create_size));
 
     if (VmaMemoryInfo* aliased = FindAliasedMemoryInfo(memory_alloc_info,
                                                        memory_offset,
