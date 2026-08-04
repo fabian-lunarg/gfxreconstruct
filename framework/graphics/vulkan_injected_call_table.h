@@ -45,12 +45,6 @@ void SetAnnotateInjectedCommands(bool enabled);
 
 bool GetAnnotateInjectedCommands();
 
-// Records the real dispatch table for `device` in the registry that the
-// generated ScopeCheck trampolines and GetRegisteredDeviceTable() forward
-// through. Entries are never removed; re-registering a reused dispatch key
-// overwrites.
-void RegisterDeviceTable(VkDevice device, const VulkanDeviceTable* table);
-
 // RAII scope marking a run of replay-injected Vulkan calls on the calling thread.
 class InjectedCommandScope
 {
@@ -81,21 +75,20 @@ class VulkanInjectedDeviceCallsTable : public VulkanInjectedDeviceCallsTableBase
   public:
     VulkanInjectedDeviceCallsTable() = delete;
 
-    VulkanInjectedDeviceCallsTable(VkDevice device, const VulkanDeviceTable* raw_table) : raw_table_(raw_table)
-    {
-        RegisterDeviceTable(device, raw_table);
-    }
+    explicit VulkanInjectedDeviceCallsTable(const VulkanDeviceTable* raw_table) :
+        VulkanInjectedDeviceCallsTableBase(raw_table)
+    {}
 
     const VulkanDeviceTable* GetRawTable() const { return raw_table_; }
+
+    // Hand-written: also stamps a label marking the command buffer as fully synthesized.
+    VkResult BeginCommandBuffer(VkCommandBuffer commandBuffer, const VkCommandBufferBeginInfo* pBeginInfo) const;
 
     [[nodiscard]] InjectedCommandScope MarkScope(VkCommandBuffer command_buffer, const char* category) const;
 
     [[nodiscard]] InjectedCommandScope MarkScope() const;
 
     void InsertLabel(VkCommandBuffer command_buffer, const char* category) const;
-
-  private:
-    const VulkanDeviceTable* raw_table_;
 };
 
 using InjectedDeviceCallsDispatchTablesMap =

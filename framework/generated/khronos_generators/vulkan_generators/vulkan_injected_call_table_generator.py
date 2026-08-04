@@ -62,13 +62,10 @@ class VulkanInjectedCallTableGeneratorOptions(VulkanBaseGeneratorOptions):
 
 class VulkanInjectedCallTableGenerator(VulkanBaseGenerator):
     """VulkanInjectedCallTableGenerator - subclass of VulkanBaseGenerator.
-    Generates the ScopeCheck namespace and VulkanInjectedDeviceCallsTableBase.
-    The namespace holds one trampoline per device command that asserts the
-    calling thread is inside an injected-commands scope and then forwards to
-    the real dispatch table, located through the dispatch key of the call's
-    first argument. VulkanInjectedDeviceCallsTableBase has the same function-pointer
-    entries as VulkanDeviceTable, each default-initialized to the equivalent
-    ScopeCheck function.
+    Generates VulkanInjectedDeviceCallsTableBase, which holds one member
+    function per device command. Each member asserts the calling thread is
+    inside an injected-commands scope and then forwards to the real dispatch
+    table held by the base.
     """
 
     # Commands with hand-written members in the derived VulkanInjectedCallTable.
@@ -119,48 +116,42 @@ class VulkanInjectedCallTableGenerator(VulkanBaseGenerator):
         device_cmds = self.get_device_commands()
 
         self.newline()
-        write('const VulkanDeviceTable* GetRegisteredDeviceTable(const void* handle);', file=self.outFile)
+        write('// One member per device command: asserts the calling thread is inside an', file=self.outFile)
+        write('// injected-commands scope, then forwards to the real dispatch table.', file=self.outFile)
         self.newline()
-        write('// Trampolines that assert the calling thread is inside an injected-commands', file=self.outFile)
-        write('// scope and then forward to the real dispatch table.', file=self.outFile)
+        write('class VulkanInjectedDeviceCallsTableBase', file=self.outFile)
+        write('{', file=self.outFile)
+        write('  public:', file=self.outFile)
+        write('    explicit VulkanInjectedDeviceCallsTableBase(const VulkanDeviceTable* raw_table) :', file=self.outFile)
+        write('        raw_table_(raw_table)', file=self.outFile)
+        write('    {', file=self.outFile)
+        write('        GFXRECON_ASSERT(raw_table_ != nullptr);', file=self.outFile)
+        write('    }', file=self.outFile)
         self.newline()
-        write('GFXRECON_BEGIN_NAMESPACE(ScopeCheck)', file=self.outFile)
-        write('// clang-format off', file=self.outFile)
+        write('    // clang-format off', file=self.outFile)
 
         for name in device_cmds:
+            if name in self.MANUALLY_OVERRIDDEN_COMMANDS:
+                write(
+                    '    // {} is hand-written in the derived table.'.format(name[2:]),
+                    file=self.outFile
+                )
+                continue
+
             return_type, proto, values = self.all_cmd_params[name]
             params = ', '.join([self.make_param_decl(value) for value in values])
             args = ', '.join([value.name for value in values])
 
-            if name in self.MANUALLY_OVERRIDDEN_COMMANDS:
-                write(
-                    '// Hand-written in framework/graphics/vulkan_injected_call_table.cpp.',
-                    file=self.outFile
-                )
-                write(
-                    'VKAPI_ATTR {} VKAPI_CALL {}({});'.format(return_type, name, params),
-                    file=self.outFile
-                )
-            else:
-                write(
-                    'inline VKAPI_ATTR {} VKAPI_CALL {}({}) {{ GFXRECON_ASSERT(util::InsideInjectedCommands() && "{} called outside an InjectedCommandScope"); return GetRegisteredDeviceTable({})->{}({}); }}'
-                    .format(return_type, name, params, name, values[0].name, name[2:], args),
-                    file=self.outFile
-                )
-
-        write('// clang-format on', file=self.outFile)
-        write('GFXRECON_END_NAMESPACE(ScopeCheck)', file=self.outFile)
-        self.newline()
-
-        write('class VulkanInjectedDeviceCallsTableBase', file=self.outFile)
-        write('{', file=self.outFile)
-        write('  public:', file=self.outFile)
-        write('    // clang-format off', file=self.outFile)
-
-        for name in device_cmds:
-            write('    PFN_{} {}{{ ScopeCheck::{} }};'.format(name, name[2:], name), file=self.outFile)
+            write(
+                '    {} {}({}) const {{ GFXRECON_ASSERT(util::InsideInjectedCommands() && "{} called outside an InjectedCommandScope"); return raw_table_->{}({}); }}'
+                .format(return_type, name[2:], params, name, name[2:], args),
+                file=self.outFile
+            )
 
         write('    // clang-format on', file=self.outFile)
+        self.newline()
+        write('  protected:', file=self.outFile)
+        write('    const VulkanDeviceTable* raw_table_;', file=self.outFile)
         write('};', file=self.outFile)
 
         # Finish processing in superclass

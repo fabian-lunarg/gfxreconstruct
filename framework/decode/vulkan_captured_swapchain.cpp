@@ -331,7 +331,7 @@ void VulkanCapturedSwapchain::ProcessSetSwapchainImageStateCommand(
     {
         uint32_t capture_image_count = static_cast<uint32_t>(image_info.size());
         result                       = GetSwapchainImagesKHR(VK_SUCCESS,
-                                       device_table_->GetSwapchainImagesKHR,
+                                       device_table_->GetRawTable()->GetSwapchainImagesKHR,
                                        device_info,
                                        swapchain_info,
                                        capture_image_count,
@@ -464,7 +464,7 @@ void VulkanCapturedSwapchain::ProcessSetSwapchainImageStatePreAcquire(
                 if (result == VK_SUCCESS)
                 {
                     result = AcquireNextImageKHR(VK_SUCCESS,
-                                                 device_table_->AcquireNextImageKHR,
+                                                 device_table_->GetRawTable()->AcquireNextImageKHR,
                                                  device_info,
                                                  swapchain_info,
                                                  std::numeric_limits<uint64_t>::max(),
@@ -666,7 +666,7 @@ void VulkanCapturedSwapchain::ProcessSetSwapchainImageStateQueueSubmit(
                 if (result == VK_SUCCESS)
                 {
                     result = AcquireNextImageKHR(VK_SUCCESS,
-                                                 device_table_->AcquireNextImageKHR,
+                                                 device_table_->GetRawTable()->AcquireNextImageKHR,
                                                  device_info,
                                                  swapchain_info,
                                                  std::numeric_limits<uint64_t>::max(),
@@ -762,7 +762,7 @@ void VulkanCapturedSwapchain::ProcessSetSwapchainImageStateQueueSubmit(
                 if (result == VK_SUCCESS)
                 {
                     result = AcquireNextImageKHR(VK_SUCCESS,
-                                                 device_table_->AcquireNextImageKHR,
+                                                 device_table_->GetRawTable()->AcquireNextImageKHR,
                                                  device_info,
                                                  swapchain_info,
                                                  std::numeric_limits<uint64_t>::max(),

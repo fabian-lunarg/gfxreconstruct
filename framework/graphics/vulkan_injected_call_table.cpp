@@ -23,8 +23,6 @@
 #include "graphics/vulkan_injected_call_table.h"
 
 #include <atomic>
-#include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <vulkan/vulkan_core.h>
 
@@ -32,8 +30,6 @@ GFXRECON_BEGIN_NAMESPACE(gfxrecon)
 GFXRECON_BEGIN_NAMESPACE(graphics)
 
 static std::atomic<bool> annotate_injected_commands{ false };
-static std::unordered_map<graphics::VulkanDispatchKey, const graphics::VulkanDeviceTable*> device_table_registry_g;
-static std::shared_mutex                                                                   registry_mutex_g;
 
 void SetAnnotateInjectedCommands(bool enabled)
 {
@@ -53,41 +49,12 @@ static VkDebugUtilsLabelEXT MakeLabel(const std::string& label_name)
     return label;
 }
 
-void RegisterDeviceTable(VkDevice device, const VulkanDeviceTable* table)
-{
-    GFXRECON_ASSERT(device != VK_NULL_HANDLE);
-    std::unique_lock<std::shared_mutex> lock(registry_mutex_g);
-    device_table_registry_g[GetVulkanDispatchKey(device)] = table;
-}
-
-const VulkanDeviceTable* GetRegisteredDeviceTable(const void* handle)
-{
-    static const VulkanDeviceTable noop_table{};
-
-    if (handle == nullptr)
-    {
-        GFXRECON_ASSERT(false && "Injected call made with a null handle");
-        return &noop_table;
-    }
-
-    std::shared_lock<std::shared_mutex> lock(registry_mutex_g);
-
-    const auto entry = device_table_registry_g.find(GetVulkanDispatchKey(handle));
-    if (entry == device_table_registry_g.end())
-    {
-        GFXRECON_ASSERT(false && "No device dispatch table registered for injected call handle");
-        return &noop_table;
-    }
-
-    return entry->second;
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL ScopeCheck::vkBeginCommandBuffer(VkCommandBuffer                 commandBuffer,
-                                                                const VkCommandBufferBeginInfo* pBeginInfo)
+VkResult VulkanInjectedDeviceCallsTable::BeginCommandBuffer(VkCommandBuffer                 commandBuffer,
+                                                            const VkCommandBufferBeginInfo* pBeginInfo) const
 {
     GFXRECON_ASSERT(util::InsideInjectedCommands() && "vkBeginCommandBuffer called outside an InjectedCommandScope");
 
-    const VulkanDeviceTable* table = GetRegisteredDeviceTable(commandBuffer);
+    const VulkanDeviceTable* table = GetRawTable();
 
     VkResult result = table->BeginCommandBuffer(commandBuffer, pBeginInfo);
 

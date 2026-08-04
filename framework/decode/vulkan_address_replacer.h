@@ -433,8 +433,8 @@ class VulkanAddressReplacer
         //! the acceleration-structure this asset was created for, used to detect stale entries after address-reuse
         VkAccelerationStructureKHR origin_handle = VK_NULL_HANDLE;
 
-        VkDevice                              device     = VK_NULL_HANDLE;
-        PFN_vkDestroyAccelerationStructureKHR destroy_fn = nullptr;
+        VkDevice                                        device       = VK_NULL_HANDLE;
+        const graphics::VulkanInjectedDeviceCallsTable* device_table = nullptr;
         ~acceleration_structure_asset_t();
     };
 
@@ -457,9 +457,7 @@ class VulkanAddressReplacer
         VkFence         fence            = VK_NULL_HANDLE;
         graphics::VulkanSemaphore signal_semaphore{ VK_NULL_HANDLE };
 
-        PFN_vkDestroyFence       destroy_fence_fn        = nullptr;
-        PFN_vkFreeCommandBuffers free_command_buffers_fn = nullptr;
-        PFN_vkDestroySemaphore   destroy_semaphore_fn    = nullptr;
+        const graphics::VulkanInjectedDeviceCallsTable* device_table = nullptr;
 
         submit_asset_t()                      = default;
         submit_asset_t(const submit_asset_t&) = delete;
@@ -503,6 +501,13 @@ class VulkanAddressReplacer
                  VkAccessFlags        src_access,
                  VkPipelineStageFlags dst_stage,
                  VkAccessFlags        dst_access) const;
+
+    //! dispatch to the core or KHR-alias entry-point, depending on the replay-device's api-version
+    VkDeviceAddress GetBufferDeviceAddress(const VkBufferDeviceAddressInfo* address_info) const
+    {
+        return use_khr_buffer_device_address_ ? device_table_->GetBufferDeviceAddressKHR(device_, address_info)
+                                              : device_table_->GetBufferDeviceAddress(device_, address_info);
+    }
 
     bool swap_acceleration_structure_handle(VkAccelerationStructureKHR&               handle,
                                             const decode::VulkanDeviceAddressTracker& address_tracker);
@@ -563,7 +568,7 @@ class VulkanAddressReplacer
     std::unordered_map<VkCommandBuffer, submit_asset_t> submit_asset_map_;
 
     // required function pointers
-    PFN_vkGetBufferDeviceAddress       get_device_address_fn_             = nullptr;
+    bool                               use_khr_buffer_device_address_     = false;
     PFN_vkGetPhysicalDeviceProperties2 get_physical_device_properties_fn_ = nullptr;
     PFN_vkSetDebugUtilsObjectNameEXT   set_debug_utils_object_name_fn_    = nullptr;
 };

@@ -194,9 +194,9 @@ decode::VulkanAddressReplacer::buffer_context_t::~buffer_context_t()
 
 decode::VulkanAddressReplacer::acceleration_structure_asset_t::~acceleration_structure_asset_t()
 {
-    if (handle != VK_NULL_HANDLE && destroy_fn != nullptr && device != VK_NULL_HANDLE)
+    if (handle != VK_NULL_HANDLE && device_table != nullptr && device != VK_NULL_HANDLE)
     {
-        destroy_fn(device, handle, nullptr);
+        device_table->DestroyAccelerationStructureKHR(device, handle, nullptr);
     }
 }
 
@@ -219,26 +219,24 @@ void decode::VulkanAddressReplacer::submit_asset_t::swap(submit_asset_t& other) 
     std::swap(command_buffer, other.command_buffer);
     std::swap(fence, other.fence);
     std::swap(signal_semaphore, other.signal_semaphore);
-    std::swap(destroy_fence_fn, other.destroy_fence_fn);
-    std::swap(free_command_buffers_fn, other.free_command_buffers_fn);
-    std::swap(destroy_semaphore_fn, other.destroy_semaphore_fn);
+    std::swap(device_table, other.device_table);
 }
 
 decode::VulkanAddressReplacer::submit_asset_t::~submit_asset_t()
 {
-    if (device != VK_NULL_HANDLE)
+    if (device != VK_NULL_HANDLE && device_table != nullptr)
     {
-        if (destroy_fence_fn != nullptr && fence != VK_NULL_HANDLE)
+        if (fence != VK_NULL_HANDLE)
         {
-            destroy_fence_fn(device, fence, nullptr);
+            device_table->DestroyFence(device, fence, nullptr);
         }
-        if (free_command_buffers_fn != nullptr && command_buffer != VK_NULL_HANDLE)
+        if (command_buffer != VK_NULL_HANDLE)
         {
-            free_command_buffers_fn(device, command_pool, 1, &command_buffer);
+            device_table->FreeCommandBuffers(device, command_pool, 1, &command_buffer);
         }
-        if (destroy_semaphore_fn != nullptr && signal_semaphore.semaphore != VK_NULL_HANDLE)
+        if (signal_semaphore.semaphore != VK_NULL_HANDLE)
         {
-            destroy_semaphore_fn(device, signal_semaphore.semaphore, nullptr);
+            device_table->DestroySemaphore(device, signal_semaphore.semaphore, nullptr);
         }
     }
 }
@@ -255,9 +253,7 @@ VulkanAddressReplacer::VulkanAddressReplacer(const VulkanDeviceInfo*            
     GFXRECON_ASSERT(physical_device_info_ != nullptr);
     device_                = device_info->handle;
     resource_allocator_    = device_info->allocator.get();
-    get_device_address_fn_ = physical_device_info_->parent_info.api_version >= VK_API_VERSION_1_2
-                                 ? device_table->GetBufferDeviceAddress
-                                 : device_table->GetBufferDeviceAddressKHR;
+    use_khr_buffer_device_address_ = physical_device_info_->parent_info.api_version < VK_API_VERSION_1_2;
 
     get_physical_device_properties_fn_ = instance_table->GetPhysicalDeviceProperties2;
 
@@ -810,7 +806,7 @@ void VulkanAddressReplacer::ProcessCmdBindDescriptorSets(VulkanCommandBufferInfo
                     address_info.sType                     = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
                     address_info.buffer                    = buffer_info->handle;
                     buffer_info->capture_address           = buffer_info->replay_address =
-                        get_device_address_fn_(device_, &address_info);
+                        GetBufferDeviceAddress(&address_info);
                     GFXRECON_ASSERT(buffer_info->replay_address != 0);
 
                     // track newly acquired buffer/address
@@ -1324,7 +1320,7 @@ void VulkanAddressReplacer::ProcessCmdBuildAccelerationStructuresKHR(
                     address_info.sType                     = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
                     address_info.buffer                    = acceleration_structure_info->buffer;
                     as_replay_address =
-                        get_device_address_fn_(device_, &address_info) + acceleration_structure_info->offset;
+                        GetBufferDeviceAddress(&address_info) + acceleration_structure_info->offset;
 
                     // adjust/assign queried address and start tracking
                     auto* accel_info_mut =
@@ -2091,7 +2087,7 @@ bool VulkanAddressReplacer::create_buffer(VulkanAddressReplacer::buffer_context_
     VkBufferDeviceAddressInfo address_info = {};
     address_info.sType                     = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
     address_info.buffer                    = buffer_context.buffer;
-    buffer_context.device_address          = get_device_address_fn_(device_, &address_info);
+    buffer_context.device_address          = GetBufferDeviceAddress(&address_info);
     GFXRECON_ASSERT(buffer_context.device_address != 0);
 
     // ensure alignment for returned address
@@ -2252,7 +2248,7 @@ bool VulkanAddressReplacer::create_acceleration_asset(VulkanAddressReplacer::acc
                                                       size_t num_scratch_bytes)
 {
     as_asset.device     = device_;
-    as_asset.destroy_fn = device_table_->DestroyAccelerationStructureKHR;
+    as_asset.device_table = device_table_;
 
     auto injected_command_scope = device_table_->MarkScope();
 
@@ -2300,9 +2296,7 @@ bool VulkanAddressReplacer::create_submit_asset(submit_asset_t& submit_asset)
     // clear previous content and setup
     submit_asset.device                  = device_;
     submit_asset.command_pool            = command_pool_;
-    submit_asset.destroy_fence_fn        = device_table_->DestroyFence;
-    submit_asset.free_command_buffers_fn = device_table_->FreeCommandBuffers;
-    submit_asset.destroy_semaphore_fn    = device_table_->DestroySemaphore;
+    submit_asset.device_table            = device_table_;
 
     if (submit_asset.command_buffer == VK_NULL_HANDLE)
     {

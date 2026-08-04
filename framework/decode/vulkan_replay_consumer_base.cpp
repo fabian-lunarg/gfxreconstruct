@@ -1536,7 +1536,7 @@ void VulkanReplayConsumerBase::AddDeviceTable(VkDevice device, PFN_vkGetDevicePr
     graphics::VulkanDeviceTable& table = device_tables_[key];
     graphics::LoadVulkanDeviceTable(gpa, device, &table);
 
-    injected_device_tables_.insert_or_assign(key, graphics::VulkanInjectedDeviceCallsTable(device, &table));
+    injected_device_tables_.insert_or_assign(key, graphics::VulkanInjectedDeviceCallsTable(&table));
 }
 
 PFN_vkGetDeviceProcAddr VulkanReplayConsumerBase::GetDeviceAddrProc(VkPhysicalDevice physical_device)
@@ -8968,7 +8968,7 @@ VulkanReplayConsumerBase::OverrideQueuePresentKHR(PFN_vkQueuePresentKHR         
 
                     uint32_t replay_index = 0;
                     result                = swapchain_->AcquireNextImageKHR(original_result,
-                                                             device_table->AcquireNextImageKHR,
+                                                             device_table->GetRawTable()->AcquireNextImageKHR,
                                                              swapchain_info->device_info,
                                                              swapchain_info,
                                                              std::numeric_limits<uint64_t>::max(),
@@ -9116,7 +9116,7 @@ VulkanReplayConsumerBase::OverrideQueuePresentKHR(PFN_vkQueuePresentKHR         
 
                     uint32_t replay_index = 0;
                     result                = swapchain_->AcquireNextImageKHR(original_result,
-                                                             device_table->AcquireNextImageKHR,
+                                                             device_table->GetRawTable()->AcquireNextImageKHR,
                                                              swapchain_info->device_info,
                                                              swapchain_info,
                                                              std::numeric_limits<uint64_t>::max(),
@@ -10169,9 +10169,8 @@ VulkanReplayConsumerBase::OverrideDeferredOperationJoinKHR(PFN_vkDeferredOperati
         GFXRECON_ASSERT(device_table != nullptr);
         auto injected_command_scope = device_table->MarkScope();
 
-        PFN_vkGetDeferredOperationMaxConcurrencyKHR vkGetDeferredOperationMaxConcurrencyKHR =
-            device_table->GetDeferredOperationMaxConcurrencyKHR;
-        deferred_operation_max_concurrency = vkGetDeferredOperationMaxConcurrencyKHR(device, deferred_operation);
+        deferred_operation_max_concurrency =
+            device_table->GetDeferredOperationMaxConcurrencyKHR(device, deferred_operation);
     }
 
     uint32_t                       max_threads  = std::thread::hardware_concurrency();
