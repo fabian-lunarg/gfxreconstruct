@@ -3304,16 +3304,17 @@ VkResult DrawCallsDumpingContext::BeginRenderPass(uint64_t                     b
     // secondaries) fall inside this render pass and therefore replay with the cloned render pass.
     const std::vector<Index>* block_range = FindRenderPassBlockRange(block_index);
 
-    // A well-formed dump-args range for this render pass has one entry per subpass boundary plus
-    // begin/end, so it can never describe more subpass intervals than the render pass has subpasses.
-    // More intervals means the range does not match this render pass (stale or hand-edited json).
-    if (block_range != nullptr && block_range->size() - 1 > new_render_pass_context->render_pass_clones.size())
+    // The range holds the begin, one entry per vkCmdNextSubpass and the end.
+    // Any other size does not match this render pass, e.g. a stale or hand-edited json.
+    const size_t subpass_count = new_render_pass_context->render_pass_clones.size();
+    if (block_range != nullptr && block_range->size() != subpass_count + 1)
     {
-        GFXRECON_LOG_WARNING("Dump resources: render pass block range with %zu entries does not match a render "
-                             "pass with %zu subpass(es); draw calls in out-of-range subpasses will replay with "
-                             "the original render pass and their attachments may not be dumpable.",
-                             block_range->size(),
-                             new_render_pass_context->render_pass_clones.size());
+        GFXRECON_LOG_FATAL("Dump resources: the range of the render pass at block %" PRIu64
+                           " has %zu entries, but the render pass has %zu subpass(es) and needs %zu entries.",
+                           block_index,
+                           block_range->size(),
+                           subpass_count,
+                           subpass_count + 1);
     }
 
     // Add vkCmdBeginRenderPass into the cloned command buffers using the modified render pass
