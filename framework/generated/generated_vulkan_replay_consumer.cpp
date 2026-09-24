@@ -6249,7 +6249,7 @@ void VulkanReplayConsumer::Process_vkCmdDebugMarkerBeginEXT(
 
     if (options_.dumping_resources)
     {
-        resource_dumper_->Process_vkCmdDebugMarkerBeginEXT(call_info, GetInjectedDeviceCalls(in_commandBuffer), in_commandBuffer, in_pMarkerInfo);
+        resource_dumper_->Process_vkCmdDebugMarkerBeginEXT(call_info, GetInjectedDeviceCalls(in_commandBuffer), in_commandBuffer, &args.pMarkerInfo);
     }
 }
 
@@ -6911,7 +6911,7 @@ void VulkanReplayConsumer::Process_vkCmdBeginDebugUtilsLabelEXT(
 
     if (options_.dumping_resources)
     {
-        resource_dumper_->Process_vkCmdBeginDebugUtilsLabelEXT(call_info, GetInjectedDeviceCalls(in_commandBuffer), in_commandBuffer, in_pLabelInfo);
+        resource_dumper_->Process_vkCmdBeginDebugUtilsLabelEXT(call_info, GetInjectedDeviceCalls(in_commandBuffer), in_commandBuffer, &args.pLabelInfo);
     }
 }
 

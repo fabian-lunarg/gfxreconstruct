@@ -1215,7 +1215,7 @@ void Process_vkCmdDebugMarkerBeginEXT(
     const ApiCallInfo&                          call_info,
     const graphics::VulkanInjectedDeviceCalls&  device_table,
     VkCommandBuffer                             commandBuffer,
-    const VkDebugMarkerMarkerInfoEXT*           pMarkerInfo);
+    StructPointerDecoder<Decoded_VkDebugMarkerMarkerInfoEXT>* pMarkerInfo);
 
 void Process_vkCmdDebugMarkerEndEXT(
     const ApiCallInfo&                          call_info,
@@ -1349,7 +1349,7 @@ void Process_vkCmdBeginDebugUtilsLabelEXT(
     const ApiCallInfo&                          call_info,
     const graphics::VulkanInjectedDeviceCalls&  device_table,
     VkCommandBuffer                             commandBuffer,
-    const VkDebugUtilsLabelEXT*                 pLabelInfo);
+    StructPointerDecoder<Decoded_VkDebugUtilsLabelEXT>* pLabelInfo);
 
 void Process_vkCmdEndDebugUtilsLabelEXT(
     const ApiCallInfo&                          call_info,

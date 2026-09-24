@@ -444,6 +444,24 @@ class VulkanReplayDumpResourcesBase
         VkCommandBuffer                                                    commandBuffer,
         StructPointerDecoder<Decoded_VkRenderingInputAttachmentIndexInfo>* pInputAttachmentIndexInfo);
 
+    void OverrideCmdBeginDebugUtilsLabelEXT(const ApiCallInfo&                                  call_info,
+                                            PFN_vkCmdBeginDebugUtilsLabelEXT                    func,
+                                            VkCommandBuffer                                     commandBuffer,
+                                            StructPointerDecoder<Decoded_VkDebugUtilsLabelEXT>* pLabelInfo);
+
+    void OverrideCmdEndDebugUtilsLabelEXT(const ApiCallInfo&             call_info,
+                                          PFN_vkCmdEndDebugUtilsLabelEXT func,
+                                          VkCommandBuffer                commandBuffer);
+
+    void OverrideCmdDebugMarkerBeginEXT(const ApiCallInfo&                                        call_info,
+                                        PFN_vkCmdDebugMarkerBeginEXT                              func,
+                                        VkCommandBuffer                                           commandBuffer,
+                                        StructPointerDecoder<Decoded_VkDebugMarkerMarkerInfoEXT>* pMarkerInfo);
+
+    void OverrideCmdDebugMarkerEndEXT(const ApiCallInfo&         call_info,
+                                      PFN_vkCmdDebugMarkerEndEXT func,
+                                      VkCommandBuffer            commandBuffer);
+
     void
     OverrideEndCommandBuffer(const ApiCallInfo& call_info, PFN_vkEndCommandBuffer func, VkCommandBuffer commandBuffer);
 

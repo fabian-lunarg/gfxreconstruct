@@ -4098,30 +4098,13 @@ void VulkanReplayDumpResources::Process_vkCmdDebugMarkerBeginEXT(
     const ApiCallInfo&                          call_info,
     const graphics::VulkanInjectedDeviceCalls&  device_table,
     VkCommandBuffer                             commandBuffer,
-    const VkDebugMarkerMarkerInfoEXT*           pMarkerInfo)
+    StructPointerDecoder<Decoded_VkDebugMarkerMarkerInfoEXT>* pMarkerInfo)
 {
     if (IsRecording())
     {
-        const std::vector<std::shared_ptr<DrawCallsDumpingContext>> dc_contexts = FindDrawCallDumpingContexts(commandBuffer);
-        const std::vector<std::shared_ptr<DispatchTraceRaysDumpingContext>> dr_contexts = FindDispatchTraceRaysContexts(commandBuffer);
-        if (!dc_contexts.empty() || !dr_contexts.empty())
-        {
-            auto injected = device_table.Open();
-            const auto func = injected->CmdDebugMarkerBeginEXT;
-            for (auto dc_context : dc_contexts)
-            {
-                func(dc_context->GetWorkCommandBuffer(), pMarkerInfo);
-            }
-
-            for (auto dr_context : dr_contexts)
-            {
-                VkCommandBuffer dispatch_rays_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
-                if (dispatch_rays_command_buffer != VK_NULL_HANDLE)
-                {
-                    func(dispatch_rays_command_buffer, pMarkerInfo);
-                }
-            }
-        }
+        auto injected = device_table.Open();
+        const auto func = injected->CmdDebugMarkerBeginEXT;
+        OverrideCmdDebugMarkerBeginEXT(call_info, func, commandBuffer, pMarkerInfo);
     }
 }
 
@@ -4132,26 +4115,9 @@ void VulkanReplayDumpResources::Process_vkCmdDebugMarkerEndEXT(
 {
     if (IsRecording())
     {
-        const std::vector<std::shared_ptr<DrawCallsDumpingContext>> dc_contexts = FindDrawCallDumpingContexts(commandBuffer);
-        const std::vector<std::shared_ptr<DispatchTraceRaysDumpingContext>> dr_contexts = FindDispatchTraceRaysContexts(commandBuffer);
-        if (!dc_contexts.empty() || !dr_contexts.empty())
-        {
-            auto injected = device_table.Open();
-            const auto func = injected->CmdDebugMarkerEndEXT;
-            for (auto dc_context : dc_contexts)
-            {
-                func(dc_context->GetWorkCommandBuffer());
-            }
-
-            for (auto dr_context : dr_contexts)
-            {
-                VkCommandBuffer dispatch_rays_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
-                if (dispatch_rays_command_buffer != VK_NULL_HANDLE)
-                {
-                    func(dispatch_rays_command_buffer);
-                }
-            }
-        }
+        auto injected = device_table.Open();
+        const auto func = injected->CmdDebugMarkerEndEXT;
+        OverrideCmdDebugMarkerEndEXT(call_info, func, commandBuffer);
     }
 }
 
@@ -4614,30 +4580,13 @@ void VulkanReplayDumpResources::Process_vkCmdBeginDebugUtilsLabelEXT(
     const ApiCallInfo&                          call_info,
     const graphics::VulkanInjectedDeviceCalls&  device_table,
     VkCommandBuffer                             commandBuffer,
-    const VkDebugUtilsLabelEXT*                 pLabelInfo)
+    StructPointerDecoder<Decoded_VkDebugUtilsLabelEXT>* pLabelInfo)
 {
     if (IsRecording())
     {
-        const std::vector<std::shared_ptr<DrawCallsDumpingContext>> dc_contexts = FindDrawCallDumpingContexts(commandBuffer);
-        const std::vector<std::shared_ptr<DispatchTraceRaysDumpingContext>> dr_contexts = FindDispatchTraceRaysContexts(commandBuffer);
-        if (!dc_contexts.empty() || !dr_contexts.empty())
-        {
-            auto injected = device_table.Open();
-            const auto func = injected->CmdBeginDebugUtilsLabelEXT;
-            for (auto dc_context : dc_contexts)
-            {
-                func(dc_context->GetWorkCommandBuffer(), pLabelInfo);
-            }
-
-            for (auto dr_context : dr_contexts)
-            {
-                VkCommandBuffer dispatch_rays_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
-                if (dispatch_rays_command_buffer != VK_NULL_HANDLE)
-                {
-                    func(dispatch_rays_command_buffer, pLabelInfo);
-                }
-            }
-        }
+        auto injected = device_table.Open();
+        const auto func = injected->CmdBeginDebugUtilsLabelEXT;
+        OverrideCmdBeginDebugUtilsLabelEXT(call_info, func, commandBuffer, pLabelInfo);
     }
 }
 
@@ -4648,26 +4597,9 @@ void VulkanReplayDumpResources::Process_vkCmdEndDebugUtilsLabelEXT(
 {
     if (IsRecording())
     {
-        const std::vector<std::shared_ptr<DrawCallsDumpingContext>> dc_contexts = FindDrawCallDumpingContexts(commandBuffer);
-        const std::vector<std::shared_ptr<DispatchTraceRaysDumpingContext>> dr_contexts = FindDispatchTraceRaysContexts(commandBuffer);
-        if (!dc_contexts.empty() || !dr_contexts.empty())
-        {
-            auto injected = device_table.Open();
-            const auto func = injected->CmdEndDebugUtilsLabelEXT;
-            for (auto dc_context : dc_contexts)
-            {
-                func(dc_context->GetWorkCommandBuffer());
-            }
-
-            for (auto dr_context : dr_contexts)
-            {
-                VkCommandBuffer dispatch_rays_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
-                if (dispatch_rays_command_buffer != VK_NULL_HANDLE)
-                {
-                    func(dispatch_rays_command_buffer);
-                }
-            }
-        }
+        auto injected = device_table.Open();
+        const auto func = injected->CmdEndDebugUtilsLabelEXT;
+        OverrideCmdEndDebugUtilsLabelEXT(call_info, func, commandBuffer);
     }
 }
 

@@ -36,11 +36,13 @@
 #include "util/defines.h"
 #include "util/logging.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <map>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -215,6 +217,14 @@ class DrawCallsDumpingContext
 
     // The clone a work command is recorded into: the current one.
     VkCommandBuffer GetWorkCommandBuffer() const;
+
+    // Debug label and marker scopes are closed at the end of each window and reopened in the next clone, so every
+    // clone ends the scopes it begins.
+    void BeginDebugUtilsLabel(const VkDebugUtilsLabelEXT& label_info);
+
+    void BeginDebugMarker(const VkDebugMarkerMarkerInfoEXT& marker_info);
+
+    void EndDebugScope(bool is_marker);
 
     // The clones that have the active render pass instance begun: the stored range of an instance this
     // context began, or the current clone for one it only forwards.
@@ -473,6 +483,21 @@ class DrawCallsDumpingContext
     // True when command_buffers_ ends in a tail clone: the work a secondary records after its last target
     // draw, which the target draws that follow it still need.
     bool has_tail_clone_;
+
+    // A debug label or marker scope begun in this command buffer and not ended yet
+    struct DebugScope
+    {
+        bool                 is_marker;
+        std::string          name;
+        std::array<float, 4> color;
+    };
+
+    void RecordDebugScopeBegin(VkCommandBuffer command_buffer, const DebugScope& scope) const;
+
+    void RecordDebugScopeEnd(VkCommandBuffer command_buffer, bool is_marker) const;
+
+    // In begin order
+    std::vector<DebugScope> open_debug_scopes_;
 
     // One entry per descriptor set
     BoundDescriptorSets bound_descriptor_sets_gr_;

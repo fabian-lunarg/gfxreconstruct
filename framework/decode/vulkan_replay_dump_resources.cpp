@@ -1992,6 +1992,94 @@ void VulkanReplayDumpResourcesBase::OverrideCmdSetRenderingInputAttachmentIndice
     }
 }
 
+void VulkanReplayDumpResourcesBase::OverrideCmdBeginDebugUtilsLabelEXT(
+    const ApiCallInfo&                                  call_info,
+    PFN_vkCmdBeginDebugUtilsLabelEXT                    func,
+    VkCommandBuffer                                     original_command_buffer,
+    StructPointerDecoder<Decoded_VkDebugUtilsLabelEXT>* pLabelInfo)
+{
+    GFXRECON_ASSERT(IsRecording());
+
+    for (const auto& dc_context : FindDrawCallDumpingContexts(original_command_buffer))
+    {
+        dc_context->BeginDebugUtilsLabel(*pLabelInfo->GetPointer());
+    }
+
+    for (const auto& dr_context : FindDispatchTraceRaysContexts(original_command_buffer))
+    {
+        VkCommandBuffer dr_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
+        if (dr_command_buffer != VK_NULL_HANDLE)
+        {
+            func(dr_command_buffer, pLabelInfo->GetPointer());
+        }
+    }
+}
+
+void VulkanReplayDumpResourcesBase::OverrideCmdEndDebugUtilsLabelEXT(const ApiCallInfo&             call_info,
+                                                                     PFN_vkCmdEndDebugUtilsLabelEXT func,
+                                                                     VkCommandBuffer original_command_buffer)
+{
+    GFXRECON_ASSERT(IsRecording());
+
+    for (const auto& dc_context : FindDrawCallDumpingContexts(original_command_buffer))
+    {
+        dc_context->EndDebugScope(false);
+    }
+
+    for (const auto& dr_context : FindDispatchTraceRaysContexts(original_command_buffer))
+    {
+        VkCommandBuffer dr_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
+        if (dr_command_buffer != VK_NULL_HANDLE)
+        {
+            func(dr_command_buffer);
+        }
+    }
+}
+
+void VulkanReplayDumpResourcesBase::OverrideCmdDebugMarkerBeginEXT(
+    const ApiCallInfo&                                        call_info,
+    PFN_vkCmdDebugMarkerBeginEXT                              func,
+    VkCommandBuffer                                           original_command_buffer,
+    StructPointerDecoder<Decoded_VkDebugMarkerMarkerInfoEXT>* pMarkerInfo)
+{
+    GFXRECON_ASSERT(IsRecording());
+
+    for (const auto& dc_context : FindDrawCallDumpingContexts(original_command_buffer))
+    {
+        dc_context->BeginDebugMarker(*pMarkerInfo->GetPointer());
+    }
+
+    for (const auto& dr_context : FindDispatchTraceRaysContexts(original_command_buffer))
+    {
+        VkCommandBuffer dr_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
+        if (dr_command_buffer != VK_NULL_HANDLE)
+        {
+            func(dr_command_buffer, pMarkerInfo->GetPointer());
+        }
+    }
+}
+
+void VulkanReplayDumpResourcesBase::OverrideCmdDebugMarkerEndEXT(const ApiCallInfo&         call_info,
+                                                                 PFN_vkCmdDebugMarkerEndEXT func,
+                                                                 VkCommandBuffer            original_command_buffer)
+{
+    GFXRECON_ASSERT(IsRecording());
+
+    for (const auto& dc_context : FindDrawCallDumpingContexts(original_command_buffer))
+    {
+        dc_context->EndDebugScope(true);
+    }
+
+    for (const auto& dr_context : FindDispatchTraceRaysContexts(original_command_buffer))
+    {
+        VkCommandBuffer dr_command_buffer = dr_context->GetDispatchRaysCommandBuffer();
+        if (dr_command_buffer != VK_NULL_HANDLE)
+        {
+            func(dr_command_buffer);
+        }
+    }
+}
+
 VkResult VulkanReplayDumpResourcesBase::QueueSubmit(std::span<const VkSubmitInfo>              submit_infos,
                                                     const graphics::VulkanInjectedDeviceCalls& device_table,
                                                     const VulkanQueueInfo*                     queue,

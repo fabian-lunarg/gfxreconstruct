@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <ranges>
@@ -179,6 +180,8 @@ void DrawCallsDumpingContext::Release()
     dc_slots_.clear();
     RP_indices_.clear();
     render_pass_dumped_descriptors_.clear();
+
+    open_debug_scopes_.clear();
 
     current_cb_index_ = 0;
     has_tail_clone_   = false;
@@ -975,6 +978,11 @@ void DrawCallsDumpingContext::FinalizeCommandBuffer(DrawCallsDumpingContext::Dra
 
     auto injected = device_table_.Open();
 
+    for (auto scope = open_debug_scopes_.rbegin(); scope != open_debug_scopes_.rend(); ++scope)
+    {
+        RecordDebugScopeEnd(current_command_buffer, scope->is_marker);
+    }
+
     // When calling CmdEndRenderPass/CmdEndRendering we need to distinguish the following two cases:
     // 1. While inside a render pass then we need to call it once from the primary right after CmdExecuteCommands
     // 2. For dynamic rendering we need to make sure that we call CmdEndRendering only once, either from the secondary
@@ -1025,6 +1033,14 @@ void DrawCallsDumpingContext::FinalizeCommandBuffer(DrawCallsDumpingContext::Dra
 
     // Increment index of command buffer that is going to be finalized next
     ++current_cb_index_;
+
+    if (current_cb_index_ < command_buffers_.size())
+    {
+        for (const DebugScope& scope : open_debug_scopes_)
+        {
+            RecordDebugScopeBegin(command_buffers_[current_cb_index_], scope);
+        }
+    }
 }
 
 bool DrawCallsDumpingContext::MustDumpDrawCall(uint64_t index) const
@@ -3880,6 +3896,71 @@ VkCommandBuffer DrawCallsDumpingContext::GetWorkCommandBuffer() const
 {
     GFXRECON_ASSERT(current_cb_index_ < command_buffers_.size());
     return command_buffers_[current_cb_index_];
+}
+
+void DrawCallsDumpingContext::BeginDebugUtilsLabel(const VkDebugUtilsLabelEXT& label_info)
+{
+    DebugScope scope{ false, label_info.pLabelName, {} };
+    std::copy(std::begin(label_info.color), std::end(label_info.color), scope.color.begin());
+    RecordDebugScopeBegin(GetWorkCommandBuffer(), scope);
+    open_debug_scopes_.push_back(std::move(scope));
+}
+
+void DrawCallsDumpingContext::BeginDebugMarker(const VkDebugMarkerMarkerInfoEXT& marker_info)
+{
+    DebugScope scope{ true, marker_info.pMarkerName, {} };
+    std::copy(std::begin(marker_info.color), std::end(marker_info.color), scope.color.begin());
+    RecordDebugScopeBegin(GetWorkCommandBuffer(), scope);
+    open_debug_scopes_.push_back(std::move(scope));
+}
+
+void DrawCallsDumpingContext::EndDebugScope(bool is_marker)
+{
+    RecordDebugScopeEnd(GetWorkCommandBuffer(), is_marker);
+
+    // A scope begun in an earlier command buffer is not tracked here
+    const auto scope = std::find_if(open_debug_scopes_.rbegin(),
+                                    open_debug_scopes_.rend(),
+                                    [is_marker](const DebugScope& s) { return s.is_marker == is_marker; });
+    if (scope != open_debug_scopes_.rend())
+    {
+        open_debug_scopes_.erase(std::next(scope).base());
+    }
+}
+
+void DrawCallsDumpingContext::RecordDebugScopeBegin(VkCommandBuffer command_buffer, const DebugScope& scope) const
+{
+    const float* color    = scope.color.data();
+    auto         injected = device_table_.Open();
+    if (scope.is_marker)
+    {
+        const VkDebugMarkerMarkerInfoEXT info{ VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT,
+                                               nullptr,
+                                               scope.name.c_str(),
+                                               { color[0], color[1], color[2], color[3] } };
+        injected->CmdDebugMarkerBeginEXT(command_buffer, &info);
+    }
+    else
+    {
+        const VkDebugUtilsLabelEXT info{ VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+                                         nullptr,
+                                         scope.name.c_str(),
+                                         { color[0], color[1], color[2], color[3] } };
+        injected->CmdBeginDebugUtilsLabelEXT(command_buffer, &info);
+    }
+}
+
+void DrawCallsDumpingContext::RecordDebugScopeEnd(VkCommandBuffer command_buffer, bool is_marker) const
+{
+    auto injected = device_table_.Open();
+    if (is_marker)
+    {
+        injected->CmdDebugMarkerEndEXT(command_buffer);
+    }
+    else
+    {
+        injected->CmdEndDebugUtilsLabelEXT(command_buffer);
+    }
 }
 
 uint32_t DrawCallsDumpingContext::GetRenderPassCommandBuffers(CommandBufferIterator& first,
