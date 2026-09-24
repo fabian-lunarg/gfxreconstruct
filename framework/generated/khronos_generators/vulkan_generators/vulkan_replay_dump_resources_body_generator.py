@@ -119,6 +119,13 @@ class VulkanReplayDumpResourcesBodyGenerator(
             return False
         return name.startswith(('vkCmdBind', 'vkCmdSet', 'vkCmdPush'))
 
+    # Debug label and marker scopes stay out of the draw call clones, since a window boundary would split them.
+    def is_debug_scope_command(self, name):
+        return name in (
+            'vkCmdBeginDebugUtilsLabelEXT', 'vkCmdEndDebugUtilsLabelEXT',
+            'vkCmdDebugMarkerBeginEXT', 'vkCmdDebugMarkerEndEXT'
+        )
+
     def make_consumer_func_body(self, api_data, return_type, name, values):
         """
         Method override.
@@ -130,32 +137,39 @@ class VulkanReplayDumpResourcesBodyGenerator(
         is_transfer = name in self.DUMP_RESOURCES_TRANSFER_API_CALLS
 
         if not is_override:
+            to_draw_calls = not self.is_debug_scope_command(name)
+
             body += '    if (IsRecording())\n'
             body += '    {\n'
-            body += '        const std::vector<std::shared_ptr<DrawCallsDumpingContext>> dc_contexts = FindDrawCallDumpingContexts(commandBuffer);\n'
+            if to_draw_calls:
+                body += '        const std::vector<std::shared_ptr<DrawCallsDumpingContext>> dc_contexts = FindDrawCallDumpingContexts(commandBuffer);\n'
             body += '        const std::vector<std::shared_ptr<DispatchTraceRaysDumpingContext>> dr_contexts = FindDispatchTraceRaysContexts(commandBuffer);\n'
-            body += '        if (!dc_contexts.empty() || !dr_contexts.empty())\n'
+            if to_draw_calls:
+                body += '        if (!dc_contexts.empty() || !dr_contexts.empty())\n'
+            else:
+                body += '        if (!dr_contexts.empty())\n'
             body += '        {\n'
             body += '            auto injected = device_table.Open();\n'
             body += '            const auto func = injected->{};\n'.format(name[2:])
-            body += '            for (auto dc_context : dc_contexts)\n'
-            body += '            {\n'
 
             call_expr = ''
             for val in values[1:]:
                 call_expr += '{}, '.format(val.name)
 
-            if self.is_state_command(name):
-                body += '                CommandBufferIterator first, last;\n'
-                body += '                dc_context->GetDrawCallActiveCommandBuffers(first, last);\n'
-                body += '                for (CommandBufferIterator it = first; it < last; ++it)\n'
-                body += '                {\n'
-                body += '                    ' + ('func(*it, ' + call_expr)[:-2] + ');\n'
-                body += '                }\n'
-            else:
-                body += '                ' + ('func(dc_context->GetWorkCommandBuffer(), ' + call_expr)[:-2] + ');\n'
-            body += '            }\n'
-            body += '\n'
+            if to_draw_calls:
+                body += '            for (auto dc_context : dc_contexts)\n'
+                body += '            {\n'
+                if self.is_state_command(name):
+                    body += '                CommandBufferIterator first, last;\n'
+                    body += '                dc_context->GetDrawCallActiveCommandBuffers(first, last);\n'
+                    body += '                for (CommandBufferIterator it = first; it < last; ++it)\n'
+                    body += '                {\n'
+                    body += '                    ' + ('func(*it, ' + call_expr)[:-2] + ');\n'
+                    body += '                }\n'
+                else:
+                    body += '                ' + ('func(dc_context->GetWorkCommandBuffer(), ' + call_expr)[:-2] + ');\n'
+                body += '            }\n'
+                body += '\n'
             body += '            for (auto dr_context : dr_contexts)\n'
             body += '            {\n'
             body += '                VkCommandBuffer dispatch_rays_command_buffer = dr_context->GetDispatchRaysCommandBuffer();\n'
