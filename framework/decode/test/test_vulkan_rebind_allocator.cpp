@@ -47,22 +47,27 @@ constexpr VkMemoryPropertyFlags kHostCoherent =
 constexpr VkMemoryPropertyFlags kHostCached     = kHostCoherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
 constexpr VkMemoryPropertyFlags kLazy           = kDeviceLocal | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
 constexpr VkMemoryPropertyFlags kDeviceLocalAmd = kDeviceLocal | VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD;
+constexpr VkMemoryPropertyFlags kProtected      = kDeviceLocal | VK_MEMORY_PROPERTY_PROTECTED_BIT;
 
 // Replay memory types, ordered so that VMA picks a different type for each memory usage.
-constexpr uint32_t     kReplayCpuOnly  = 0;
-constexpr uint32_t     kReplayGpuOnly  = 1;
-constexpr uint32_t     kReplayCpuToGpu = 2;
-constexpr uint32_t     kReplayGpuToCpu = 3;
-constexpr uint32_t     kReplayLazy     = 4;
-constexpr uint32_t     kAllReplayTypes = 0x1f;
-constexpr VkDeviceSize kHeapSize       = VkDeviceSize{ 256 } << 20;
+// The plain type comes first, so GPU_ONLY lands on it when no device-local type is allowed.
+constexpr uint32_t     kReplayPlain         = 0;
+constexpr uint32_t     kReplayCpuOnly       = 1;
+constexpr uint32_t     kReplayGpuOnly       = 2;
+constexpr uint32_t     kReplayCpuToGpu      = 3;
+constexpr uint32_t     kReplayGpuToCpu      = 4;
+constexpr uint32_t     kReplayLazy          = 5;
+constexpr uint32_t     kReplayProtected     = 6;
+constexpr uint32_t     kAllUnprotectedTypes = 0x3f;
+constexpr VkDeviceSize kHeapSize            = VkDeviceSize{ 256 } << 20;
 
 // Capture memory types. Their indices differ from the replay indices of the same flags.
-constexpr uint32_t kCaptureDeviceLocal    = 0;
-constexpr uint32_t kCaptureHostCoherent   = 1;
-constexpr uint32_t kCaptureHostCached     = 2;
-constexpr uint32_t kCaptureLazy           = 3;
-constexpr uint32_t kCaptureDeviceLocalAmd = 4;
+constexpr uint32_t kCaptureHostCached      = 0;
+constexpr uint32_t kCaptureDeviceLocal     = 1;
+constexpr uint32_t kCaptureLazy            = 2;
+constexpr uint32_t kCaptureHostCoherent    = 3;
+constexpr uint32_t kCaptureDeviceLocalAmd  = 4;
+constexpr uint32_t kCaptureDeviceLocalHost = 5;
 
 constexpr VkDeviceSize kImageSize       = 65536;
 constexpr VkDeviceSize kImageAlignment  = 4096;
@@ -84,11 +89,11 @@ VkPhysicalDeviceMemoryProperties MakeMemoryProperties(const std::vector<VkMemory
     return properties;
 }
 
-const VkPhysicalDeviceMemoryProperties kReplayMemoryProperties =
-    MakeMemoryProperties({ kHostCoherent, kDeviceLocal, kDeviceLocal | kHostCoherent, kHostCached, kLazy });
+const VkPhysicalDeviceMemoryProperties kReplayMemoryProperties = MakeMemoryProperties(
+    { 0, kHostCoherent, kDeviceLocal, kDeviceLocal | kHostCoherent, kHostCached, kLazy, kProtected });
 
-const VkPhysicalDeviceMemoryProperties kCaptureMemoryProperties =
-    MakeMemoryProperties({ kDeviceLocal, kHostCoherent, kHostCached, kLazy, kDeviceLocalAmd });
+const VkPhysicalDeviceMemoryProperties kCaptureMemoryProperties = MakeMemoryProperties(
+    { kHostCached, kDeviceLocal, kLazy, kHostCoherent, kDeviceLocalAmd, kDeviceLocal | kHostCoherent });
 
 struct AllocateRecord
 {
@@ -109,14 +114,24 @@ struct BindRecord
 // Fake Vulkan device. Records the calls it receives and answers queries from the settings below.
 struct FakeDevice
 {
-    uint32_t memory_type_bits{ kAllReplayTypes };
+    uint32_t memory_type_bits{ kAllUnprotectedTypes };
     bool     image_requires_dedicated{ false };
+
+    std::vector<VkDataGraphPipelineSessionBindPointRequirementARM> session_bind_points;
+    VkDeviceSize                                                   session_memory_size{ 4096 };
+    VkResult                                                       session_bind_result{ VK_SUCCESS };
 
     std::vector<AllocateRecord> allocations;
     std::vector<VkDeviceMemory> frees;
     std::vector<BindRecord>     binds;
     std::vector<VkCommandPool>  created_pools;
     std::vector<VkCommandPool>  destroyed_pools;
+
+    std::vector<VkDataGraphPipelineSessionARM>                       created_sessions;
+    std::vector<VkDataGraphPipelineSessionARM>                       destroyed_sessions;
+    std::vector<VkDataGraphPipelineSessionMemoryRequirementsInfoARM> session_memory_queries;
+    std::vector<VkBindDataGraphPipelineSessionMemoryInfoARM>         session_binds;
+    uint32_t                                                         session_bind_calls{ 0 };
 
     std::unordered_map<VkBuffer, VkDeviceSize> buffer_sizes;
     uint64_t                                   next_handle{ 0x1000 };
@@ -308,6 +323,61 @@ VKAPI_ATTR void VKAPI_CALL FakeGetDeviceQueue(VkDevice, uint32_t, uint32_t, VkQu
     *queue = g_fake->NewHandle<VkQueue>();
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL FakeCreateDataGraphPipelineSession(VkDevice,
+                                                                  const VkDataGraphPipelineSessionCreateInfoARM*,
+                                                                  const VkAllocationCallbacks*,
+                                                                  VkDataGraphPipelineSessionARM* session)
+{
+    *session = g_fake->NewHandle<VkDataGraphPipelineSessionARM>();
+    g_fake->created_sessions.push_back(*session);
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL FakeDestroyDataGraphPipelineSession(VkDevice,
+                                                               VkDataGraphPipelineSessionARM session,
+                                                               const VkAllocationCallbacks*)
+{
+    g_fake->destroyed_sessions.push_back(session);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+FakeGetDataGraphPipelineSessionBindPointRequirements(VkDevice,
+                                                     const VkDataGraphPipelineSessionBindPointRequirementsInfoARM*,
+                                                     uint32_t*                                          count,
+                                                     VkDataGraphPipelineSessionBindPointRequirementARM* requirements)
+{
+    const auto& bind_points = g_fake->session_bind_points;
+    if (requirements != nullptr)
+    {
+        REQUIRE(*count == bind_points.size());
+        for (size_t i = 0; i < bind_points.size(); ++i)
+        {
+            requirements[i].bindPoint     = bind_points[i].bindPoint;
+            requirements[i].bindPointType = bind_points[i].bindPointType;
+            requirements[i].numObjects    = bind_points[i].numObjects;
+        }
+    }
+    *count = static_cast<uint32_t>(bind_points.size());
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL FakeGetDataGraphPipelineSessionMemoryRequirements(
+    VkDevice, const VkDataGraphPipelineSessionMemoryRequirementsInfoARM* info, VkMemoryRequirements2* requirements)
+{
+    g_fake->session_memory_queries.push_back(*info);
+    requirements->memoryRequirements.size           = g_fake->session_memory_size;
+    requirements->memoryRequirements.alignment      = kBufferAlignment;
+    requirements->memoryRequirements.memoryTypeBits = g_fake->memory_type_bits;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL FakeBindDataGraphPipelineSessionMemory(
+    VkDevice, uint32_t count, const VkBindDataGraphPipelineSessionMemoryInfoARM* infos)
+{
+    ++g_fake->session_bind_calls;
+    g_fake->session_binds.insert(g_fake->session_binds.end(), infos, infos + count);
+    return g_fake->session_bind_result;
+}
+
 // A rebind allocator initialized on the fake device. Destroys what the test left behind.
 class RebindFixture
 {
@@ -336,6 +406,14 @@ class RebindFixture
         device_table_.CreateCommandPool               = FakeCreateCommandPool;
         device_table_.DestroyCommandPool              = FakeDestroyCommandPool;
         device_table_.GetDeviceQueue                  = FakeGetDeviceQueue;
+
+        device_table_.CreateDataGraphPipelineSessionARM  = FakeCreateDataGraphPipelineSession;
+        device_table_.DestroyDataGraphPipelineSessionARM = FakeDestroyDataGraphPipelineSession;
+        device_table_.GetDataGraphPipelineSessionBindPointRequirementsARM =
+            FakeGetDataGraphPipelineSessionBindPointRequirements;
+        device_table_.GetDataGraphPipelineSessionMemoryRequirementsARM =
+            FakeGetDataGraphPipelineSessionMemoryRequirements;
+        device_table_.BindDataGraphPipelineSessionMemoryARM = FakeBindDataGraphPipelineSessionMemory;
 
         VkPhysicalDeviceProperties replay_properties{};
         FakeGetPhysicalDeviceProperties(VK_NULL_HANDLE, &replay_properties);
@@ -395,7 +473,7 @@ class RebindFixture
         VkImage image = VK_NULL_HANDLE;
         REQUIRE(allocator_.CreateImage(&info, nullptr, next_capture_id_++, &image, data) == VK_SUCCESS);
 
-        VkMemoryRequirements capture_requirements{ kImageSize, kImageAlignment, kAllReplayTypes };
+        VkMemoryRequirements capture_requirements{ kImageSize, kImageAlignment, kAllUnprotectedTypes };
         allocator_.GetImageMemoryRequirements(image, &capture_requirements, *data);
 
         images_.push_back({ image, *data });
@@ -412,7 +490,7 @@ class RebindFixture
         VkBuffer buffer = VK_NULL_HANDLE;
         REQUIRE(allocator_.CreateBuffer(&info, nullptr, next_capture_id_++, &buffer, data) == VK_SUCCESS);
 
-        VkMemoryRequirements capture_requirements{ size, kBufferAlignment, kAllReplayTypes };
+        VkMemoryRequirements capture_requirements{ size, kBufferAlignment, kAllUnprotectedTypes };
         allocator_.GetBufferMemoryRequirements(buffer, &capture_requirements, *data);
 
         buffers_.push_back({ buffer, *data });
@@ -433,6 +511,29 @@ class RebindFixture
         return memory;
     }
 
+    // Creates a data graph session. Rebind allocates and binds the session memory here.
+    VkResult CreateSession(VkDataGraphPipelineSessionCreateFlagsARM flags,
+                           VkDataGraphPipelineSessionARM*           session,
+                           ResourceData*                            data)
+    {
+        VkDataGraphPipelineSessionCreateInfoARM info{ VK_STRUCTURE_TYPE_DATA_GRAPH_PIPELINE_SESSION_CREATE_INFO_ARM };
+        info.flags = flags;
+
+        const VkResult result =
+            allocator_.CreateDataGraphPipelineSession(&info, nullptr, next_capture_id_++, session, data);
+        if (result == VK_SUCCESS)
+        {
+            sessions_.push_back({ *session, *data });
+        }
+        return result;
+    }
+
+    void DestroySession(VkDataGraphPipelineSessionARM session, ResourceData data)
+    {
+        allocator_.DestroyDataGraphPipelineSession(session, nullptr, data);
+        sessions_.erase(std::find(sessions_.begin(), sessions_.end(), std::make_pair(session, data)));
+    }
+
     // Destroys all resources, frees all memory, and destroys the allocator.
     void Teardown()
     {
@@ -442,6 +543,10 @@ class RebindFixture
         }
         destroyed_ = true;
 
+        for (const auto& [session, data] : sessions_)
+        {
+            allocator_.DestroyDataGraphPipelineSession(session, nullptr, data);
+        }
         for (const auto& [image, data] : images_)
         {
             allocator_.DestroyImage(image, nullptr, data);
@@ -470,6 +575,8 @@ class RebindFixture
     std::vector<std::pair<VkImage, ResourceData>>      images_;
     std::vector<std::pair<VkBuffer, ResourceData>>     buffers_;
     std::vector<std::pair<VkDeviceMemory, MemoryData>> memories_;
+
+    std::vector<std::pair<VkDataGraphPipelineSessionARM, ResourceData>> sessions_;
 };
 
 } // namespace
@@ -505,54 +612,94 @@ TEST_CASE("Rebind picks the image memory usage from tiling, usage and captured m
         uint32_t          expected_replay_type;
     };
 
+    const VkImageUsageFlags kLinearMixedUsage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                                VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+
     const Row rows[] = {
         { "optimal, device local",
           VK_IMAGE_TILING_OPTIMAL,
           VK_IMAGE_USAGE_SAMPLED_BIT,
           kCaptureDeviceLocal,
-          kAllReplayTypes,
+          kAllUnprotectedTypes,
           kReplayGpuOnly },
         { "optimal, host visible",
           VK_IMAGE_TILING_OPTIMAL,
           VK_IMAGE_USAGE_SAMPLED_BIT,
           kCaptureHostCoherent,
-          kAllReplayTypes,
+          kAllUnprotectedTypes,
           kReplayCpuToGpu },
         { "optimal, host cached",
           VK_IMAGE_TILING_OPTIMAL,
           VK_IMAGE_USAGE_SAMPLED_BIT,
           kCaptureHostCached,
-          kAllReplayTypes,
+          kAllUnprotectedTypes,
           kReplayGpuToCpu },
         { "linear, transfer src only",
           VK_IMAGE_TILING_LINEAR,
           VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
           kCaptureHostCoherent,
-          kAllReplayTypes,
+          kAllUnprotectedTypes,
           kReplayCpuOnly },
         { "linear, transfer dst only",
           VK_IMAGE_TILING_LINEAR,
           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
           kCaptureHostCoherent,
-          kAllReplayTypes,
+          kAllUnprotectedTypes,
           kReplayGpuToCpu },
         { "linear, device local",
           VK_IMAGE_TILING_LINEAR,
           VK_IMAGE_USAGE_SAMPLED_BIT,
           kCaptureDeviceLocal,
-          kAllReplayTypes,
+          kAllUnprotectedTypes,
           kReplayGpuOnly },
         { "transient, lazily allocated",
           VK_IMAGE_TILING_OPTIMAL,
           VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
           kCaptureLazy,
-          kAllReplayTypes,
+          kAllUnprotectedTypes,
           kReplayLazy },
         { "host cached, but replay allows no host visible type",
           VK_IMAGE_TILING_OPTIMAL,
           VK_IMAGE_USAGE_SAMPLED_BIT,
           kCaptureHostCached,
           (1u << kReplayGpuOnly) | (1u << kReplayLazy),
+          kReplayGpuOnly },
+        { "linear, mixed usage",
+          VK_IMAGE_TILING_LINEAR,
+          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+          kCaptureHostCoherent,
+          kAllUnprotectedTypes,
+          kReplayCpuToGpu },
+        { "optimal, device local and host visible",
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_IMAGE_USAGE_SAMPLED_BIT,
+          kCaptureDeviceLocalHost,
+          kAllUnprotectedTypes,
+          kReplayGpuOnly },
+        { "linear, mixed usage, device local and host visible",
+          VK_IMAGE_TILING_LINEAR,
+          kLinearMixedUsage,
+          kCaptureDeviceLocalHost,
+          kAllUnprotectedTypes,
+          kReplayCpuToGpu },
+        { "device local, but replay allows no device local type",
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_IMAGE_USAGE_SAMPLED_BIT,
+          kCaptureDeviceLocal,
+          (1u << kReplayPlain) | (1u << kReplayCpuOnly),
+          kReplayCpuOnly },
+        { "host visible, but replay allows no host visible type",
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_IMAGE_USAGE_SAMPLED_BIT,
+          kCaptureHostCoherent,
+          1u << kReplayGpuOnly,
+          kReplayGpuOnly },
+        { "transient, but replay allows no lazily allocated type",
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+          kCaptureLazy,
+          1u << kReplayGpuOnly,
           kReplayGpuOnly },
     };
 
@@ -568,9 +715,15 @@ TEST_CASE("Rebind picks the image memory usage from tiling, usage and captured m
         VkImage        image       = fixture.CreateImage(row.tiling, row.usage, &image_data);
         VkDeviceMemory memory      = fixture.AllocateMemory(kImageSize, row.capture_memory_type, &memory_data);
 
+        // CHECK rather than REQUIRE, so a failing row does not hide the rows after it.
         VkMemoryPropertyFlags bind_properties = 0;
-        REQUIRE(fixture.allocator().BindImageMemory(image, memory, 0, image_data, memory_data, &bind_properties) ==
-                VK_SUCCESS);
+        const VkResult        result =
+            fixture.allocator().BindImageMemory(image, memory, 0, image_data, memory_data, &bind_properties);
+        CHECK(result == VK_SUCCESS);
+        if (result != VK_SUCCESS)
+        {
+            continue;
+        }
 
         const BindRecord bind = fixture.fake().BindOf(VK_HANDLE_TO_UINT64(image));
         CHECK(fixture.fake().AllocationOf(bind.memory).memory_type == row.expected_replay_type);
@@ -721,4 +874,198 @@ TEST_CASE("Rebind frees every device memory it allocated", "[rebind]")
         CHECK(std::count(fake.frees.begin(), fake.frees.end(), allocation.memory) == 1);
     }
     CHECK(fake.destroyed_pools == fake.created_pools);
+}
+
+namespace
+{
+
+// Larger than half of VMA's preferred block size, so VMA gives each object its own VkDeviceMemory.
+constexpr VkDeviceSize kDedicatedSessionMemorySize = VkDeviceSize{ 32 } << 20;
+
+VkDataGraphPipelineSessionBindPointRequirementARM MemoryBindPoint(VkDataGraphPipelineSessionBindPointARM bind_point,
+                                                                  uint32_t                               num_objects)
+{
+    VkDataGraphPipelineSessionBindPointRequirementARM requirement{
+        VK_STRUCTURE_TYPE_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_REQUIREMENT_ARM
+    };
+    requirement.bindPoint     = bind_point;
+    requirement.bindPointType = VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TYPE_MEMORY_ARM;
+    requirement.numObjects    = num_objects;
+    return requirement;
+}
+
+} // namespace
+
+TEST_CASE("Rebind binds memory for every data graph session object in one call", "[rebind]")
+{
+    RebindFixture fixture;
+    FakeDevice&   fake       = fixture.fake();
+    fake.session_bind_points = { MemoryBindPoint(VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_OPTICAL_FLOW_CACHE_ARM, 2),
+                                 MemoryBindPoint(VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM, 1) };
+
+    VkDataGraphPipelineSessionARM session      = VK_NULL_HANDLE;
+    ResourceData                  session_data = 0;
+    REQUIRE(fixture.CreateSession(0, &session, &session_data) == VK_SUCCESS);
+
+    REQUIRE(fake.session_bind_calls == 1);
+    REQUIRE(fake.session_binds.size() == 3);
+    REQUIRE(fake.session_memory_queries.size() == 3);
+
+    const std::pair<VkDataGraphPipelineSessionBindPointARM, uint32_t> expected[] = {
+        { VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_OPTICAL_FLOW_CACHE_ARM, 0 },
+        { VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_OPTICAL_FLOW_CACHE_ARM, 1 },
+        { VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM, 0 },
+    };
+    for (size_t i = 0; i < fake.session_binds.size(); ++i)
+    {
+        const auto& bind  = fake.session_binds[i];
+        const auto& query = fake.session_memory_queries[i];
+        CAPTURE(i);
+        CHECK(bind.session == session);
+        CHECK(bind.bindPoint == expected[i].first);
+        CHECK(bind.objectIndex == expected[i].second);
+        CHECK(query.session == session);
+        CHECK(query.bindPoint == expected[i].first);
+        CHECK(query.objectIndex == expected[i].second);
+        CHECK(bind.memoryOffset % kBufferAlignment == 0);
+        CHECK(fake.AllocationOf(bind.memory).memory_type == kReplayGpuOnly);
+    }
+
+    // Each object gets its own range, even where VMA places them in one VkDeviceMemory.
+    for (size_t i = 0; i < fake.session_binds.size(); ++i)
+    {
+        for (size_t j = i + 1; j < fake.session_binds.size(); ++j)
+        {
+            const auto& a = fake.session_binds[i];
+            const auto& b = fake.session_binds[j];
+            CAPTURE(i, j);
+            CHECK(((a.memory != b.memory) || (a.memoryOffset + fake.session_memory_size <= b.memoryOffset) ||
+                   (b.memoryOffset + fake.session_memory_size <= a.memoryOffset)));
+        }
+    }
+}
+
+TEST_CASE("Rebind frees data graph session memory when the session is destroyed", "[rebind]")
+{
+    RebindFixture fixture;
+    FakeDevice&   fake       = fixture.fake();
+    fake.session_bind_points = { MemoryBindPoint(VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM, 2) };
+    fake.session_memory_size = kDedicatedSessionMemorySize;
+
+    VkDataGraphPipelineSessionARM session      = VK_NULL_HANDLE;
+    ResourceData                  session_data = 0;
+    REQUIRE(fixture.CreateSession(0, &session, &session_data) == VK_SUCCESS);
+    REQUIRE(fake.allocations.size() == 2);
+    REQUIRE(fake.frees.empty());
+
+    fixture.DestroySession(session, session_data);
+
+    CHECK(fake.destroyed_sessions == std::vector<VkDataGraphPipelineSessionARM>{ session });
+    CHECK(fake.frees.size() == 2);
+    for (const AllocateRecord& allocation : fake.allocations)
+    {
+        CHECK(std::count(fake.frees.begin(), fake.frees.end(), allocation.memory) == 1);
+    }
+}
+
+TEST_CASE("Rebind puts data graph session memory in device local memory", "[rebind]")
+{
+    RebindFixture fixture;
+    FakeDevice&   fake       = fixture.fake();
+    fake.session_bind_points = { MemoryBindPoint(VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM, 1) };
+
+    // The host visible type has the lower index, so VMA would take it without a preference.
+    fake.memory_type_bits = (1u << kReplayCpuOnly) | (1u << kReplayGpuOnly);
+
+    VkDataGraphPipelineSessionARM session      = VK_NULL_HANDLE;
+    ResourceData                  session_data = 0;
+    REQUIRE(fixture.CreateSession(0, &session, &session_data) == VK_SUCCESS);
+
+    REQUIRE(fake.session_binds.size() == 1);
+    CHECK(fake.AllocationOf(fake.session_binds[0].memory).memory_type == kReplayGpuOnly);
+}
+
+TEST_CASE("Rebind matches the protection of data graph session memory to the session", "[rebind]")
+{
+    RebindFixture fixture;
+    FakeDevice&   fake       = fixture.fake();
+    fake.session_bind_points = { MemoryBindPoint(VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM, 1) };
+
+    VkDataGraphPipelineSessionARM session      = VK_NULL_HANDLE;
+    ResourceData                  session_data = 0;
+
+    SECTION("unprotected session avoids the protected type")
+    {
+        // The protected type is device local, so the GPU_ONLY preference would pick it.
+        fake.memory_type_bits = (1u << kReplayCpuOnly) | (1u << kReplayProtected);
+        REQUIRE(fixture.CreateSession(0, &session, &session_data) == VK_SUCCESS);
+
+        REQUIRE(fake.session_binds.size() == 1);
+        CHECK(fake.AllocationOf(fake.session_binds[0].memory).memory_type == kReplayCpuOnly);
+    }
+
+    SECTION("protected session uses the protected type")
+    {
+        fake.memory_type_bits = kAllUnprotectedTypes | (1u << kReplayProtected);
+        REQUIRE(fixture.CreateSession(
+                    VK_DATA_GRAPH_PIPELINE_SESSION_CREATE_PROTECTED_BIT_ARM, &session, &session_data) == VK_SUCCESS);
+
+        REQUIRE(fake.session_binds.size() == 1);
+        CHECK(fake.AllocationOf(fake.session_binds[0].memory).memory_type == kReplayProtected);
+    }
+}
+
+TEST_CASE("Rebind releases everything when binding data graph session memory fails", "[rebind]")
+{
+    RebindFixture fixture;
+    FakeDevice&   fake       = fixture.fake();
+    fake.session_bind_points = { MemoryBindPoint(VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM, 2) };
+    fake.session_memory_size = kDedicatedSessionMemorySize;
+    fake.session_bind_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+
+    // Rebind logs this failure as an error. The line in the test output is expected.
+
+    VkDataGraphPipelineSessionARM session      = VK_NULL_HANDLE;
+    ResourceData                  session_data = 0;
+    CHECK(fixture.CreateSession(0, &session, &session_data) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
+    CHECK(session == VK_NULL_HANDLE);
+    CHECK(session_data == 0);
+    CHECK(fake.destroyed_sessions == fake.created_sessions);
+    REQUIRE(fake.allocations.size() == 2);
+    CHECK(fake.frees.size() == 2);
+    for (const AllocateRecord& allocation : fake.allocations)
+    {
+        CHECK(std::count(fake.frees.begin(), fake.frees.end(), allocation.memory) == 1);
+    }
+}
+
+TEST_CASE("Rebind ignores captured data graph session memory binds", "[rebind]")
+{
+    RebindFixture fixture;
+    FakeDevice&   fake       = fixture.fake();
+    fake.session_bind_points = { MemoryBindPoint(VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM, 1) };
+
+    VkDataGraphPipelineSessionARM session      = VK_NULL_HANDLE;
+    ResourceData                  session_data = 0;
+    REQUIRE(fixture.CreateSession(0, &session, &session_data) == VK_SUCCESS);
+
+    MemoryData     memory_data = 0;
+    VkDeviceMemory memory      = fixture.AllocateMemory(4096, kCaptureDeviceLocal, &memory_data);
+
+    VkBindDataGraphPipelineSessionMemoryInfoARM captured_bind{
+        VK_STRUCTURE_TYPE_BIND_DATA_GRAPH_PIPELINE_SESSION_MEMORY_INFO_ARM
+    };
+    captured_bind.session     = session;
+    captured_bind.bindPoint   = VK_DATA_GRAPH_PIPELINE_SESSION_BIND_POINT_TRANSIENT_ARM;
+    captured_bind.objectIndex = 0;
+    captured_bind.memory      = memory;
+
+    const size_t          allocation_count = fake.allocations.size();
+    VkMemoryPropertyFlags bind_properties  = 0;
+    CHECK(fixture.allocator().BindDataGraphPipelineSessionMemory(
+              1, &captured_bind, &session_data, &memory_data, &bind_properties) == VK_SUCCESS);
+
+    CHECK(fake.session_bind_calls == 1);
+    CHECK(fake.allocations.size() == allocation_count);
 }
