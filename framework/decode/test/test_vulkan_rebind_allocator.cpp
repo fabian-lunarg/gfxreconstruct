@@ -382,7 +382,8 @@ VKAPI_ATTR VkResult VKAPI_CALL FakeBindDataGraphPipelineSessionMemory(
 class RebindFixture
 {
   public:
-    explicit RebindFixture(const std::vector<std::string>& enabled_device_extensions = {})
+    explicit RebindFixture(const std::vector<std::string>& enabled_device_extensions = {},
+                           VkPhysicalDeviceType            capture_device_type = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
     {
         gfxrecon::util::Log::Init(gfxrecon::util::LoggingSeverity::kError);
         g_fake = &fake_;
@@ -422,7 +423,7 @@ class RebindFixture
 
         physical_device_info_.handle                    = fake_.NewHandle<VkPhysicalDevice>();
         physical_device_info_.parent                    = fake_.NewHandle<VkInstance>();
-        physical_device_info_.capture_device_type       = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+        physical_device_info_.capture_device_type       = capture_device_type;
         physical_device_info_.capture_memory_properties = kCaptureMemoryProperties;
         physical_device_info_.replay_device_info        = &replay_device_info_;
 
@@ -743,6 +744,67 @@ TEST_CASE("Rebind picks the image memory usage from tiling, usage and captured m
         }
 
         const BindRecord bind = fixture.fake().BindOf(VK_HANDLE_TO_UINT64(image));
+        CHECK(fixture.fake().AllocationOf(bind.memory).memory_type == row.expected_replay_type);
+    }
+}
+
+TEST_CASE("Rebind picks the buffer memory usage from usage, captured memory type and capture device", "[rebind]")
+{
+    struct Row
+    {
+        const char*          name;
+        VkPhysicalDeviceType capture_device_type;
+        VkBufferUsageFlags   usage;
+        uint32_t             capture_memory_type;
+        uint32_t             expected_replay_type;
+    };
+
+    constexpr VkPhysicalDeviceType kIntegrated = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+    constexpr VkPhysicalDeviceType kDiscrete   = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+
+    const Row rows[] = {
+        { "integrated, transfer dst, device local and host visible",
+          kIntegrated,
+          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          kCaptureDeviceLocalHost,
+          kReplayGpuOnly },
+        { "discrete, transfer dst, device local and host visible",
+          kDiscrete,
+          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          kCaptureDeviceLocalHost,
+          kReplayCpuToGpu },
+        { "integrated, uniform and transfer dst, device local and host visible",
+          kIntegrated,
+          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          kCaptureDeviceLocalHost,
+          kReplayCpuToGpu },
+        { "transfer src only", kDiscrete, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, kCaptureHostCoherent, kReplayCpuOnly },
+        { "transfer dst only", kDiscrete, VK_BUFFER_USAGE_TRANSFER_DST_BIT, kCaptureHostCoherent, kReplayGpuToCpu },
+        { "host cached", kDiscrete, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, kCaptureHostCached, kReplayGpuToCpu },
+    };
+
+    for (const Row& row : rows)
+    {
+        CAPTURE(row.name);
+
+        RebindFixture fixture({}, row.capture_device_type);
+
+        ResourceData   buffer_data = 0;
+        MemoryData     memory_data = 0;
+        VkBuffer       buffer      = fixture.CreateBuffer(4096, row.usage, &buffer_data);
+        VkDeviceMemory memory      = fixture.AllocateMemory(4096, row.capture_memory_type, &memory_data);
+
+        // CHECK rather than REQUIRE, so a failing row does not hide the rows after it.
+        VkMemoryPropertyFlags bind_properties = 0;
+        const VkResult        result =
+            fixture.allocator().BindBufferMemory(buffer, memory, 0, buffer_data, memory_data, &bind_properties);
+        CHECK(result == VK_SUCCESS);
+        if (result != VK_SUCCESS)
+        {
+            continue;
+        }
+
+        const BindRecord bind = fixture.fake().BindOf(VK_HANDLE_TO_UINT64(buffer));
         CHECK(fixture.fake().AllocationOf(bind.memory).memory_type == row.expected_replay_type);
     }
 }
