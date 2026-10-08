@@ -600,6 +600,23 @@ TEST_CASE("Rebind translates the captured memory type to a replay memory type", 
     CHECK(bind_properties == kDeviceLocal);
 }
 
+TEST_CASE("Rebind binds at the replay offset, not the captured offset", "[rebind]")
+{
+    RebindFixture fixture;
+
+    ResourceData   image_data  = 0;
+    MemoryData     memory_data = 0;
+    VkImage        image       = fixture.CreateImage(VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, &image_data);
+    VkDeviceMemory memory      = fixture.AllocateMemory(2 * kImageSize, kCaptureDeviceLocal, &memory_data);
+
+    VkMemoryPropertyFlags bind_properties = 0;
+    REQUIRE(fixture.allocator().BindImageMemory(
+                image, memory, kImageAlignment, image_data, memory_data, &bind_properties) == VK_SUCCESS);
+
+    // The first allocation from a fresh allocator starts its VMA block.
+    CHECK(fixture.fake().BindOf(VK_HANDLE_TO_UINT64(image)).offset == 0);
+}
+
 TEST_CASE("Rebind picks the image memory usage from tiling, usage and captured memory type", "[rebind]")
 {
     struct Row
@@ -1061,11 +1078,14 @@ TEST_CASE("Rebind ignores captured data graph session memory binds", "[rebind]")
     captured_bind.objectIndex = 0;
     captured_bind.memory      = memory;
 
-    const size_t          allocation_count = fake.allocations.size();
-    VkMemoryPropertyFlags bind_properties  = 0;
+    const size_t                    allocation_count = fake.allocations.size();
+    constexpr VkMemoryPropertyFlags kUntouched       = 0x1234;
+    VkMemoryPropertyFlags           bind_properties  = kUntouched;
     CHECK(fixture.allocator().BindDataGraphPipelineSessionMemory(
               1, &captured_bind, &session_data, &memory_data, &bind_properties) == VK_SUCCESS);
+    CHECK(fixture.allocator().BindDataGraphPipelineSessionMemory(99, nullptr, nullptr, nullptr, nullptr) == VK_SUCCESS);
 
+    CHECK(bind_properties == kUntouched);
     CHECK(fake.session_bind_calls == 1);
     CHECK(fake.allocations.size() == allocation_count);
 }
