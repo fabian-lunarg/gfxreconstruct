@@ -65,6 +65,7 @@ class CompressionConverter : public decode::FileTransformer
 
     // Specialists called by the vistor in ProcessMetaData
     VisitResult WriteMetaData(const decode::FillMemoryArgs& args);
+    VisitResult WriteMetaData(const decode::FillMemory2Args& args);
     VisitResult WriteMetaData(const decode::InitBufferArgs& args);
     VisitResult WriteMetaData(const decode::InitImageArgs& args);
     VisitResult WriteMetaData(const decode::InitTensorArgs& args);

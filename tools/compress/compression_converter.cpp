@@ -367,6 +367,35 @@ decode::FileTransformer::VisitResult CompressionConverter::WriteMetaData(const d
     return kSuccess;
 }
 
+decode::FileTransformer::VisitResult CompressionConverter::WriteMetaData(const decode::FillMemory2Args& args)
+{
+    GFXRECON_ASSERT(format::GetMetaDataType(args.meta_data_id) == format::MetaDataType::kFillMemoryCommand2);
+
+    // The header needs to be a copy as we are rewriting it below. payload_size stays the uncompressed size.
+    format::FillMemoryCommand2Header fill_cmd     = args.command_header;
+    size_t                           data_size    = args.data_size;
+    const uint8_t*                   data_address = args.data;
+
+    PrepMetadataBlock(fill_cmd.meta_header, args.meta_data_id, data_address, data_size);
+
+    // Calculate size of packet with compressed or uncompressed data size.
+    fill_cmd.meta_header.block_header.size = format::GetMetaDataBlockBaseSize(fill_cmd) + data_size;
+
+    if (!WriteBytes(&fill_cmd, sizeof(fill_cmd)))
+    {
+        HandleBlockWriteError(decode::kErrorWritingBlockHeader, "Failed to write fill memory 2 meta-data block header");
+        return kError;
+    }
+
+    if (!WriteBytes(data_address, data_size))
+    {
+        HandleBlockWriteError(decode::kErrorWritingBlockData, "Failed to write fill memory 2 meta-data block");
+        return kError;
+    }
+
+    return kSuccess;
+}
+
 decode::FileTransformer::VisitResult CompressionConverter::WriteMetaData(const decode::InitBufferArgs& args)
 {
     GFXRECON_ASSERT(format::GetMetaDataType(args.meta_data_id) == format::MetaDataType::kInitBufferCommand);
