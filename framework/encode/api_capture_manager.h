@@ -220,6 +220,10 @@ class ApiCaptureManager
     {
         common_manager_->WriteFillMemoryCmd(api_family_, memory_id, offset, size, data);
     }
+    void WriteFillMemoryCmd2(format::HandleId memory_id, uint32_t record_count, const std::vector<uint8_t>& payload)
+    {
+        common_manager_->WriteFillMemoryCmd2(api_family_, memory_id, record_count, payload);
+    }
 
     void WriteBeginResourceInitCmd(format::HandleId device_id, uint64_t total_copy_size, uint64_t max_resource_size)
     {

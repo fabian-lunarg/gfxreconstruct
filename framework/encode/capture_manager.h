@@ -529,6 +529,13 @@ class CommonCaptureManager
     void WriteFillMemoryCmd(
         format::ApiFamilyId api_family, format::HandleId memory_id, uint64_t offset, uint64_t size, const void* data);
 
+    // Writes one FillMemoryCommand2 block. The payload holds record_count records, each a FillMemoryRecordHeader
+    // followed by its data.
+    void WriteFillMemoryCmd2(format::ApiFamilyId         api_family,
+                             format::HandleId            memory_id,
+                             uint32_t                    record_count,
+                             const std::vector<uint8_t>& payload);
+
     void WriteBeginResourceInitCmd(format::ApiFamilyId api_family,
                                    format::HandleId    device_id,
                                    uint64_t            total_copy_size,

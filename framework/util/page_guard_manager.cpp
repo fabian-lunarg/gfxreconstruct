@@ -1354,7 +1354,9 @@ void PageGuardManager::FreePersistentShadowMemory(uintptr_t shadow_memory_handle
     }
 }
 
-void PageGuardManager::ProcessMemoryEntry(uint64_t memory_id, const ModifiedMemoryFunc& handle_modified)
+void PageGuardManager::ProcessMemoryEntry(uint64_t                     memory_id,
+                                          const ModifiedMemoryFunc&    handle_modified,
+                                          const ModifiedMemoryEndFunc& handle_end)
 {
     std::lock_guard<std::mutex> lock(tracked_memory_lock_);
 
@@ -1380,6 +1382,11 @@ void PageGuardManager::ProcessMemoryEntry(uint64_t memory_id, const ModifiedMemo
         if (memory_info->is_modified)
         {
             ProcessEntry(entry->first, memory_info, handle_modified);
+
+            if (handle_end)
+            {
+                handle_end(entry->first);
+            }
         }
     }
 
@@ -1390,7 +1397,8 @@ void PageGuardManager::ProcessMemoryEntry(uint64_t memory_id, const ModifiedMemo
     }
 }
 
-void PageGuardManager::ProcessMemoryEntries(const ModifiedMemoryFunc& handle_modified)
+void PageGuardManager::ProcessMemoryEntries(const ModifiedMemoryFunc&    handle_modified,
+                                            const ModifiedMemoryEndFunc& handle_end)
 {
     std::lock_guard<std::mutex> lock(tracked_memory_lock_);
 
@@ -1414,6 +1422,11 @@ void PageGuardManager::ProcessMemoryEntries(const ModifiedMemoryFunc& handle_mod
         if (memory_info->is_modified)
         {
             ProcessEntry(entry->first, memory_info, handle_modified);
+
+            if (handle_end)
+            {
+                handle_end(entry->first);
+            }
         }
     }
 

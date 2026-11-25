@@ -1705,6 +1705,50 @@ void CommonCaptureManager::WriteFillMemoryCmd(
     }
 }
 
+void CommonCaptureManager::WriteFillMemoryCmd2(format::ApiFamilyId         api_family,
+                                               format::HandleId            memory_id,
+                                               uint32_t                    record_count,
+                                               const std::vector<uint8_t>& payload)
+{
+    if (IsCaptureModeWrite())
+    {
+        auto thread_data = GetThreadData();
+        assert(thread_data != nullptr);
+
+        format::FillMemoryCommand2Header fill_cmd{};
+        const size_t                     header_size = sizeof(fill_cmd);
+
+        fill_cmd.meta_header.block_header.type = format::BlockType::kMetaDataBlock;
+        fill_cmd.meta_header.meta_data_id =
+            format::MakeMetaDataId(api_family, format::MetaDataType::kFillMemoryCommand2);
+        fill_cmd.thread_id      = thread_data->thread_id_;
+        fill_cmd.memory_id      = memory_id;
+        fill_cmd.layout_version = format::kFillMemoryCommand2LayoutVersion;
+        fill_cmd.record_count   = record_count;
+        fill_cmd.payload_size   = payload.size();
+
+        if (compressor_ != nullptr)
+        {
+            size_t compressed_size =
+                compressor_->Compress(payload.size(), payload.data(), &thread_data->compressed_buffer_, header_size);
+
+            if ((compressed_size > 0) && (compressed_size < payload.size()))
+            {
+                // The header keeps the uncompressed payload size, so only the block type changes.
+                fill_cmd.meta_header.block_header.type = format::BlockType::kCompressedMetaDataBlock;
+                fill_cmd.meta_header.block_header.size = format::GetMetaDataBlockBaseSize(fill_cmd) + compressed_size;
+
+                util::platform::MemoryCopy(thread_data->compressed_buffer_.data(), header_size, &fill_cmd, header_size);
+                WriteToFile(thread_data->compressed_buffer_.data(), header_size + compressed_size);
+                return;
+            }
+        }
+
+        fill_cmd.meta_header.block_header.size = format::GetMetaDataBlockBaseSize(fill_cmd) + payload.size();
+        CombineAndWriteToFile({ { &fill_cmd, header_size }, { payload.data(), payload.size() } });
+    }
+}
+
 void CommonCaptureManager::WriteBeginResourceInitCmd(format::ApiFamilyId api_family,
                                                      format::HandleId    device_id,
                                                      uint64_t            total_copy_size,

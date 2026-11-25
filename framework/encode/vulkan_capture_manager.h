@@ -46,6 +46,7 @@
 #include <cassert>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <algorithm>
 #include <set>
 #include <unordered_map>
@@ -1930,6 +1931,9 @@ class VulkanCaptureManager : public ApiCaptureManager
 
   private:
     void QueueSubmitWriteFillMemoryCmd();
+
+    // Writes the dirty ranges the page guard found, for one memory object or, with no id, for all of them.
+    void WritePageGuardFillMemoryCmds(util::PageGuardManager* manager, std::optional<format::HandleId> memory_id);
 
     static std::mutex                               instance_lock_;
     static VulkanCaptureManager*                    singleton_;

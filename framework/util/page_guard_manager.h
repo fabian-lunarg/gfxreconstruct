@@ -86,13 +86,15 @@ class PageGuardManager
 
     static const uintptr_t kNullShadowHandle = 0;
 
-  public:
     // Callback for processing modified memory.  The function parameters are the ID of the modified memory object,
     // a pointer to the start of the modified memory range, the offset from the initial mapped memory pointer to
     // the modified range pointer, and the size of the modified range.
-    typedef std::function<void(uint64_t, void*, size_t, size_t)> ModifiedMemoryFunc;
+    using ModifiedMemoryFunc = std::function<void(uint64_t, void*, size_t, size_t)>;
 
-  public:
+    // Callback after the last modified range of one memory object. The ranges are guarded again by then, so it must
+    // not read them.
+    using ModifiedMemoryEndFunc = std::function<void(uint64_t)>;
+
     static void Create(bool                 enable_copy_on_map,
                        bool                 enable_separate_read,
                        bool                 expect_read_write_same_page,
@@ -131,9 +133,12 @@ class PageGuardManager
 
     void RemoveTrackedMemory(uint64_t memory_id);
 
-    void ProcessMemoryEntry(uint64_t memory_id, const ModifiedMemoryFunc& handle_modified);
+    void ProcessMemoryEntry(uint64_t                     memory_id,
+                            const ModifiedMemoryFunc&    handle_modified,
+                            const ModifiedMemoryEndFunc& handle_end = nullptr);
 
-    void ProcessMemoryEntries(const ModifiedMemoryFunc& handle_modified);
+    void ProcessMemoryEntries(const ModifiedMemoryFunc&    handle_modified,
+                              const ModifiedMemoryEndFunc& handle_end = nullptr);
 
     bool HandleGuardPageViolation(void* address, bool is_write, bool clear_guard);
 

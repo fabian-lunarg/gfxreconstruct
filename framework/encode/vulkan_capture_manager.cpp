@@ -3082,11 +3082,7 @@ void VulkanCaptureManager::PreProcess_vkFlushMappedMemoryRanges(VkDevice        
 
                     if ((current_memory_wrapper != nullptr) && (current_memory_wrapper->mapped_data != nullptr))
                     {
-                        manager->ProcessMemoryEntry(
-                            current_memory_wrapper->handle_id,
-                            [this](uint64_t memory_id, void* start_address, size_t offset, size_t size) {
-                                WriteFillMemoryCmd(memory_id, offset, size, start_address);
-                            });
+                        WritePageGuardFillMemoryCmds(manager, current_memory_wrapper->handle_id);
                     }
                     else
                     {
@@ -3148,10 +3144,7 @@ void VulkanCaptureManager::PreProcess_vkUnmapMemory(VkDevice device, VkDeviceMem
             util::PageGuardManager* manager = util::PageGuardManager::Get();
             assert(manager != nullptr);
 
-            manager->ProcessMemoryEntry(wrapper->handle_id,
-                                        [this](uint64_t memory_id, void* start_address, size_t offset, size_t size) {
-                                            WriteFillMemoryCmd(memory_id, offset, size, start_address);
-                                        });
+            WritePageGuardFillMemoryCmds(manager, wrapper->handle_id);
 
             manager->RemoveTrackedMemory(wrapper->handle_id);
         }
@@ -3451,6 +3444,62 @@ void VulkanCaptureManager::PreProcess_vkQueueSubmit2(
     }
 }
 
+void VulkanCaptureManager::WritePageGuardFillMemoryCmds(util::PageGuardManager*         manager,
+                                                        std::optional<format::HandleId> memory_id)
+{
+    // TODO(prototype): temporary A/B switch, remove before upstreaming.
+    static const bool use_fill_memory_2 = (util::platform::GetEnv("GFXRECON_PROTOTYPE_FILL_MEMORY_2") == "1");
+
+    if (!use_fill_memory_2)
+    {
+        auto handle_modified = [this](uint64_t id, void* start_address, size_t offset, size_t size) {
+            WriteFillMemoryCmd(id, offset, size, start_address);
+        };
+
+        if (memory_id)
+        {
+            manager->ProcessMemoryEntry(*memory_id, handle_modified);
+        }
+        else
+        {
+            manager->ProcessMemoryEntries(handle_modified);
+        }
+        return;
+    }
+
+    // Each range is copied inside its callback, while the page guard keeps it readable and blocks writes to it.
+    // The end callback must not read the ranges, since they are guarded again by then.
+    std::vector<uint8_t> payload;
+    uint32_t             record_count = 0;
+
+    auto handle_modified = [&payload, &record_count](uint64_t, void* start_address, size_t offset, size_t size) {
+        const format::FillMemoryRecordHeader record_header{ offset, size };
+        const auto*                          header_bytes = reinterpret_cast<const uint8_t*>(&record_header);
+        const auto*                          data         = static_cast<const uint8_t*>(start_address) + offset;
+        payload.insert(payload.end(), header_bytes, header_bytes + sizeof(record_header));
+        payload.insert(payload.end(), data, data + size);
+        ++record_count;
+    };
+
+    auto handle_end = [this, &payload, &record_count](uint64_t id) {
+        if (record_count > 0)
+        {
+            WriteFillMemoryCmd2(id, record_count, payload);
+        }
+        payload.clear();
+        record_count = 0;
+    };
+
+    if (memory_id)
+    {
+        manager->ProcessMemoryEntry(*memory_id, handle_modified, handle_end);
+    }
+    else
+    {
+        manager->ProcessMemoryEntries(handle_modified, handle_end);
+    }
+}
+
 void VulkanCaptureManager::QueueSubmitWriteFillMemoryCmd()
 {
     if (GetMemoryTrackingMode() == CaptureSettings::MemoryTrackingMode::kPageGuard ||
@@ -3459,9 +3508,7 @@ void VulkanCaptureManager::QueueSubmitWriteFillMemoryCmd()
         util::PageGuardManager* manager = util::PageGuardManager::Get();
         assert(manager != nullptr);
 
-        manager->ProcessMemoryEntries([this](uint64_t memory_id, void* start_address, size_t offset, size_t size) {
-            WriteFillMemoryCmd(memory_id, offset, size, start_address);
-        });
+        WritePageGuardFillMemoryCmds(manager, std::nullopt);
     }
     else if (GetMemoryTrackingMode() == CaptureSettings::MemoryTrackingMode::kUnassisted)
     {
