@@ -210,6 +210,16 @@ struct FillMemoryResourceValueArgs
 
     auto GetTuple() const { return std::tie(command_header, data); }
 };
+struct FillMemory2Args
+{
+    format::MetaDataId meta_data_id; // Needed by DispatchVisitor, but not ApiDecoder
+    size_t             data_size;    // Needed for deferred decompression, but not ApiDecoder
+
+    format::FillMemoryCommand2Header command_header;
+    const uint8_t*                   data;
+
+    auto GetTuple() const { return std::tie(command_header, data); }
+};
 struct ResizeWindowArgs
 {
     format::MetaDataId meta_data_id; // Needed by DispatchVisitor, but not ApiDecoder
@@ -690,6 +700,12 @@ struct DispatchTraits<FillMemoryResourceValueArgs> : DispatchFlagTraits<FillMemo
 };
 
 template <>
+struct DispatchTraits<FillMemory2Args> : DispatchFlagTraits<FillMemory2Args>
+{
+    static constexpr auto kDecoderMethod = &ApiDecoder::DispatchFillMemoryCommand2;
+};
+
+template <>
 struct DispatchTraits<ResizeWindowArgs> : DispatchFlagTraits<ResizeWindowArgs>
 {
     static constexpr auto kDecoderMethod = &ApiDecoder::DispatchResizeWindowCommand;
@@ -917,6 +933,7 @@ using DispatchArgs = std::variant<std::monostate,
                                   ExeFileArgs*,
                                   CaptureStartQueueSubmitIndexArgs*,
                                   FillMemoryArgs*,
+                                  FillMemory2Args*,
                                   FillMemoryResourceValueArgs*,
                                   ResizeWindowArgs*,
                                   ResizeWindow2Args*,

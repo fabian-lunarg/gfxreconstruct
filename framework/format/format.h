@@ -78,6 +78,9 @@ const int8_t   kNoneIndex                 = -1;
 // know the layout of; a purely additive change goes into a new per-member property instead of a bump.
 const uint32_t kResourceAliasingGroupsLayoutVersion = 1;
 
+// Layout version of the FillMemoryCommand2 meta-data block. A new modifier id is not a layout change.
+const uint32_t kFillMemoryCommand2LayoutVersion = 1;
+
 /// Label for operation annotation, which captures parameters used by tools
 /// operating on a capture file.
 constexpr char kAnnotationLabelOperation[]           = "operation";
@@ -186,6 +189,7 @@ enum class MetaDataType : uint16_t
     kReserved47                                         = 47, // LunarG internal use
     kResourceAliasingGroupsCommand                      = 48,
     kCaptureStartQueueSubmitIndexCommand                = 49,
+    kFillMemoryCommand2                                 = 50,
 
     //! reserve values with highest-bit for special purposes
     kBeginExperimentalReservedRange = 1U << 15U
@@ -376,6 +380,33 @@ struct FillMemoryCommandHeader
     HandleId memory_id;
     uint64_t memory_offset; // Offset from the start of the mapped pointer, not the start of the memory object.
     uint64_t memory_size;   // Uncompressed size of the data encoded after the header.
+};
+
+// Many ranges of one memory object in one block. The payload after the header is, in order:
+//   modifier_count x { FillMemoryModifierHeader, size bytes of modifier data }
+//   record_count   x { FillMemoryRecordHeader, size bytes of fill data }
+// When the block is compressed, the whole payload is compressed and the header stays uncompressed.
+struct FillMemoryCommand2Header
+{
+    MetaDataHeader   meta_header;
+    format::ThreadId thread_id; // Thread that wrote the block, not necessarily the one that wrote the memory.
+    format::HandleId memory_id;
+    uint32_t         layout_version; // kFillMemoryCommand2LayoutVersion the block was written with.
+    uint32_t         modifier_count;
+    uint32_t         record_count;
+    uint64_t         payload_size; // Uncompressed size of the payload after this header.
+};
+
+struct FillMemoryModifierHeader
+{
+    uint32_t modifier_id; // Identifies the modifier.
+    uint64_t size;        // Size of the modifier data after this header.
+};
+
+struct FillMemoryRecordHeader
+{
+    uint64_t offset; // Offset from the start of the mapped pointer, as in FillMemoryCommandHeader.
+    uint64_t size;   // Size of the fill data after this header.
 };
 
 struct FillMemoryResourceValueCommandHeader

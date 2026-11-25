@@ -93,6 +93,9 @@ class VulkanDecoderBase : public ApiDecoder
     virtual void DispatchFillMemoryCommand(
         format::ThreadId thread_id, uint64_t memory_id, uint64_t offset, uint64_t size, const uint8_t* data) override;
 
+    virtual void DispatchFillMemoryCommand2(const format::FillMemoryCommand2Header& command_header,
+                                            const uint8_t*                          data) override;
+
     virtual void
     DispatchFillMemoryResourceValueCommand(const format::FillMemoryResourceValueCommandHeader& command_header,
                                            const uint8_t*                                      data) override;

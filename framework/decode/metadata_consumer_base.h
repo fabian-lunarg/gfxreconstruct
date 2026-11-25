@@ -33,6 +33,14 @@
 GFXRECON_BEGIN_NAMESPACE(gfxrecon)
 GFXRECON_BEGIN_NAMESPACE(decode)
 
+/// @brief One range of a FillMemoryCommand2 block.
+struct FillMemoryRecord
+{
+    uint64_t       offset; // Offset from the start of the mapped pointer.
+    uint64_t       size;
+    const uint8_t* data;
+};
+
 /// @brief Base class defining the virtual functions that consumers need to
 /// implement to handle metacommands.
 class MetadataConsumerBase
@@ -42,6 +50,15 @@ class MetadataConsumerBase
     virtual void ProcessCaptureStartQueueSubmitIndexCommand(uint64_t queue_submit_index) {}
     virtual void ProcessDisplayMessageCommand(const std::string& message) {}
     virtual void ProcessFillMemoryCommand(uint64_t memory_id, uint64_t offset, uint64_t size, const uint8_t* data) {}
+
+    // The default hands each record to ProcessFillMemoryCommand, so consumers that only know that work unchanged.
+    virtual void ProcessFillMemoryCommand2(uint64_t memory_id, const std::vector<FillMemoryRecord>& records)
+    {
+        for (const FillMemoryRecord& record : records)
+        {
+            ProcessFillMemoryCommand(memory_id, record.offset, record.size, record.data);
+        }
+    }
     virtual void
     ProcessFillMemoryResourceValueCommand(const format::FillMemoryResourceValueCommandHeader& command_header,
                                           const uint8_t*                                      data)

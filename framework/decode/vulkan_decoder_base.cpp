@@ -96,6 +96,82 @@ void VulkanDecoderBase::DispatchFillMemoryCommand(
     }
 }
 
+void VulkanDecoderBase::DispatchFillMemoryCommand2(const format::FillMemoryCommand2Header& command_header,
+                                                   const uint8_t*                          data)
+{
+    // A malformed block is dropped whole, so replay never writes part of it.
+    if (command_header.layout_version != format::kFillMemoryCommand2LayoutVersion)
+    {
+        GFXRECON_LOG_WARNING("Ignoring a fill memory 2 meta-data block with layout version %u, this build reads "
+                             "version %u.",
+                             command_header.layout_version,
+                             format::kFillMemoryCommand2LayoutVersion);
+        return;
+    }
+
+    GFXRECON_CHECK_CONVERSION_DATA_LOSS(size_t, command_header.payload_size);
+    const size_t payload_size = static_cast<size_t>(command_header.payload_size);
+    size_t       offset       = 0;
+
+    auto read = [&](void* destination, size_t size) {
+        if ((payload_size - offset) < size)
+        {
+            return false;
+        }
+        util::platform::MemoryCopy(destination, size, data + offset, size);
+        offset += size;
+        return true;
+    };
+
+    auto skip = [&](uint64_t size) {
+        if ((payload_size - offset) < size)
+        {
+            return false;
+        }
+        offset += static_cast<size_t>(size);
+        return true;
+    };
+
+    for (uint32_t i = 0; i < command_header.modifier_count; ++i)
+    {
+        format::FillMemoryModifierHeader modifier_header{};
+        if (!read(&modifier_header, sizeof(modifier_header)) || !skip(modifier_header.size))
+        {
+            GFXRECON_LOG_WARNING("Ignoring a truncated fill memory 2 meta-data block.");
+            return;
+        }
+        GFXRECON_LOG_WARNING_ONCE("Ignoring unknown fill memory 2 modifier %u.", modifier_header.modifier_id);
+    }
+
+    // reserve from what the block can actually hold, not from a count a corrupt block controls
+    std::vector<FillMemoryRecord> records;
+    records.reserve(std::min<size_t>(command_header.record_count,
+                                     (payload_size - offset) / sizeof(format::FillMemoryRecordHeader)));
+
+    for (uint32_t i = 0; i < command_header.record_count; ++i)
+    {
+        format::FillMemoryRecordHeader record_header{};
+        if (!read(&record_header, sizeof(record_header)))
+        {
+            GFXRECON_LOG_WARNING("Ignoring a truncated fill memory 2 meta-data block.");
+            return;
+        }
+
+        const uint8_t* record_data = data + offset;
+        if (!skip(record_header.size))
+        {
+            GFXRECON_LOG_WARNING("Ignoring a truncated fill memory 2 meta-data block.");
+            return;
+        }
+        records.push_back({ record_header.offset, record_header.size, record_data });
+    }
+
+    for (auto consumer : consumers_)
+    {
+        consumer->ProcessFillMemoryCommand2(command_header.memory_id, records);
+    }
+}
+
 void VulkanDecoderBase::DispatchExeFileInfo(format::ThreadId thread_id, const format::ExeFileInfoBlock& info)
 {
     for (auto consumer : consumers_)

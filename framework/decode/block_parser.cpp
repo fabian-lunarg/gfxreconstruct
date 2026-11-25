@@ -533,6 +533,39 @@ ParsedBlock& BlockParser::ParseMetaData(BlockBuffer& block_buffer)
             HandleBlockReadError(kErrorReadingBlockHeader, "Failed to read fill memory meta-data block header");
         }
     }
+    else if (meta_data_type == format::MetaDataType::kFillMemoryCommand2)
+    {
+        format::FillMemoryCommand2Header header{};
+
+        success = block_buffer.Read(header.thread_id);
+        success = success && block_buffer.Read(header.memory_id);
+        success = success && block_buffer.Read(header.layout_version);
+        success = success && block_buffer.Read(header.modifier_count);
+        success = success && block_buffer.Read(header.record_count);
+        success = success && block_buffer.Read(header.payload_size);
+
+        if (success)
+        {
+            const char*         label       = "fill memory 2 meta-data block";
+            ParameterReadResult read_result = ReadParameterBuffer(label, block_buffer, header.payload_size);
+            if (read_result.success && (read_result.uncompressed_size != header.payload_size))
+            {
+                HandleBlockReadError(kErrorReadingBlockData, "Fill memory 2 meta-data block payload size mismatch");
+            }
+            else if (read_result.success)
+            {
+                auto* payload = Emplace<FillMemory2Args>(meta_data_id,
+                                                         read_result.uncompressed_size,
+                                                         header,
+                                                         reinterpret_cast<const uint8_t*>(read_result.buffer.data()));
+                return MakeCompressibleParsedBlock(block_buffer, read_result, payload);
+            }
+        }
+        else
+        {
+            HandleBlockReadError(kErrorReadingBlockHeader, "Failed to read fill memory 2 meta-data block header");
+        }
+    }
     else if (meta_data_type == format::MetaDataType::kFillMemoryResourceValueCommand)
     {
         format::FillMemoryResourceValueCommandHeader header;

@@ -14,6 +14,7 @@ if (${RUN_TESTS})
             $<$<BOOL:${GFXRECON_ENABLE_VULKAN}>:${CMAKE_CURRENT_LIST_DIR}/test/test_static_array_len.cpp>
             $<$<BOOL:${GFXRECON_ENABLE_VULKAN}>:${CMAKE_CURRENT_LIST_DIR}/test/test_union_structs.cpp>
             $<$<BOOL:${GFXRECON_ENABLE_VULKAN}>:${CMAKE_CURRENT_LIST_DIR}/test/test_resource_aliasing_groups.cpp>
+            $<$<BOOL:${GFXRECON_ENABLE_VULKAN}>:${CMAKE_CURRENT_LIST_DIR}/test/test_fill_memory_2.cpp>
             ${CMAKE_CURRENT_LIST_DIR}/../tools/platform_debug_helper.cpp)
     target_link_libraries(gfxrecon_framework_test PRIVATE gfxrecon_encode gfxrecon_decode)
     if (MSVC)
