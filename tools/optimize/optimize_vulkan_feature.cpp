@@ -25,6 +25,7 @@
 #if defined(GFXRECON_ENABLE_VULKAN)
 // The modifier writes its block through gfxrecon_encode, we need to apply the same guard here
 #include "vulkan_aliasing_group_modifier.h"
+#include "vulkan_fill_address_modifier.h"
 #endif
 #include "vulkan_file_optimizer.h"
 #include "decode/file_processor.h"
@@ -46,6 +47,9 @@ GFXR_UTIL_REGISTER_FEATURE_CREATOR(OptimizeFeature, OptimizeVulkanFeature)
 // every existing caller of this tool gets that change by default and needs a way back.
 constexpr char kNoAliasingMetadata[] = "--no-aliasing-metadata";
 
+// Marking device addresses in fill data changes what replay writes to memory, so callers need a way back.
+constexpr char kNoFillAddresses[] = "--no-fill-addresses";
+
 std::vector<util::FeatureOptionDesc> OptimizeVulkanFeature::GetOptionDescs() const
 {
     return { { .name          = "",
@@ -54,7 +58,12 @@ std::vector<util::FeatureOptionDesc> OptimizeVulkanFeature::GetOptionDescs() con
                                   "then places aliased resources one bind at a time, as it does for a",
                                   "capture this tool has not seen." },
                .has_argument  = false,
-               .trigger_names = kNoAliasingMetadata } };
+               .trigger_names = kNoAliasingMetadata },
+             { .name          = "",
+               .description   = { "Do not record where fill memory data holds device addresses. Replay",
+                                  "then does not map those values when it writes the fill." },
+               .has_argument  = false,
+               .trigger_names = kNoFillAddresses } };
 }
 
 std::string OptimizeVulkanFeature::CompiledHeaderVersionString() const
@@ -97,6 +106,10 @@ bool OptimizeVulkanFeature::ScanInput(const std::string&                    inpu
 #if defined(GFXRECON_ENABLE_VULKAN)
     // Runs even with the opt-out, to strip a block an earlier run wrote.
     candidates.push_back(std::make_unique<VulkanAliasingGroupModifier>(!args.IsOptionSet(kNoAliasingMetadata)));
+    if (!args.IsOptionSet(kNoFillAddresses))
+    {
+        candidates.push_back(std::make_unique<VulkanFillAddressModifier>());
+    }
 #endif
 
     decode::FileProcessor file_processor;
