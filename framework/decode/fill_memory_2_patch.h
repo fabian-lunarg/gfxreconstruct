@@ -24,6 +24,7 @@
 #define GFXRECON_DECODE_FILL_MEMORY_2_PATCH_H
 
 #include "decode/metadata_consumer_base.h"
+#include "decode/vulkan_device_address_tracker.h"
 #include "format/format.h"
 #include "util/defines.h"
 
@@ -49,6 +50,15 @@ bool PatchFillMemoryRecords(const std::vector<FillMemoryResourceValue>& values,
                             const ResourceValueMapFunction&             map_value,
                             std::vector<uint8_t>*                       storage,
                             std::vector<FillMemoryRecord>*              records);
+
+// Size of a Vulkan resource value that replay can map, or 0.
+uint32_t GetVulkanResourceValueSize(format::ResourceValueType type);
+
+// Maps a capture-time device address to its replay-time address. Leaves null and unknown addresses as they are.
+void MapVulkanResourceValue(const VulkanDeviceAddressTracker& address_tracker,
+                            format::ResourceValueType         type,
+                            uint8_t*                          value,
+                            uint32_t                          size);
 
 GFXRECON_END_NAMESPACE(decode)
 GFXRECON_END_NAMESPACE(gfxrecon)

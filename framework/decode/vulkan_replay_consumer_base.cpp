@@ -26,6 +26,7 @@
 #include "decode/vulkan_replay_consumer_base.h"
 #include "decode/custom_vulkan_struct_handle_mappers.h"
 #include "decode/descriptor_update_template_decoder.h"
+#include "decode/fill_memory_2_patch.h"
 #include "decode/resource_util.h"
 #include "decode/vulkan_captured_swapchain.h"
 #include "decode/vulkan_device_address_tracker.h"
@@ -701,12 +702,44 @@ void VulkanReplayConsumerBase::ProcessFillMemoryCommand2(uint64_t               
         }
     }
 
-    if (!modifiers.resource_values.empty())
+    if (modifiers.resource_values.empty())
     {
-        GFXRECON_LOG_ERROR_ONCE("Fill memory resource values are not mapped yet. Replay may fail.");
+        VulkanConsumer::ProcessFillMemoryCommand2(memory_id, modifiers, records);
+        return;
     }
 
-    VulkanConsumer::ProcessFillMemoryCommand2(memory_id, modifiers, records);
+    const VulkanDeviceMemoryInfo* memory_info = object_info_table_->GetVkDeviceMemoryInfo(memory_id);
+    const VulkanDeviceInfo*       device_info =
+        (memory_info != nullptr) ? object_info_table_->GetVkDeviceInfo(memory_info->parent_id) : nullptr;
+
+    if (device_info == nullptr)
+    {
+        GFXRECON_LOG_ERROR_ONCE("Fill memory resource values without a device are not mapped. Replay may fail.");
+        VulkanConsumer::ProcessFillMemoryCommand2(memory_id, modifiers, records);
+        return;
+    }
+
+    // Capture and replay addresses are the same.
+    if (!UseAddressReplacement(device_info))
+    {
+        VulkanConsumer::ProcessFillMemoryCommand2(memory_id, modifiers, records);
+        return;
+    }
+
+    const auto& address_tracker = GetDeviceAddressTracker(device_info);
+    auto        map_value       = [&address_tracker](format::ResourceValueType type, uint8_t* value, uint32_t size) {
+        MapVulkanResourceValue(address_tracker, type, value, size);
+    };
+
+    std::vector<uint8_t>          storage;
+    std::vector<FillMemoryRecord> patched_records = records;
+    if (!PatchFillMemoryRecords(
+            modifiers.resource_values, GetVulkanResourceValueSize, map_value, &storage, &patched_records))
+    {
+        GFXRECON_LOG_ERROR_ONCE("Some fill memory resource values could not be mapped. Replay may fail.");
+    }
+
+    VulkanConsumer::ProcessFillMemoryCommand2(memory_id, modifiers, patched_records);
 }
 
 void VulkanReplayConsumerBase::ProcessResizeWindowCommand(format::HandleId surface_id, uint32_t width, uint32_t height)

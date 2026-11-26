@@ -128,5 +128,56 @@ bool PatchFillMemoryRecords(const std::vector<FillMemoryResourceValue>& values,
     return all_patched;
 }
 
+uint32_t GetVulkanResourceValueSize(format::ResourceValueType type)
+{
+    switch (type)
+    {
+        case format::ResourceValueType::kBufferDeviceAddress:
+        case format::ResourceValueType::kAccelerationStructureAddress:
+            return sizeof(VkDeviceAddress);
+        default:
+            // kShaderGroupHandle needs the pipeline's handle map, and a fill does not name the pipeline.
+            return 0;
+    }
+}
+
+void MapVulkanResourceValue(const VulkanDeviceAddressTracker& address_tracker,
+                            format::ResourceValueType         type,
+                            uint8_t*                          value,
+                            uint32_t                          size)
+{
+    GFXRECON_ASSERT(size == sizeof(VkDeviceAddress));
+
+    VkDeviceAddress address = 0;
+    util::platform::MemoryCopy(&address, sizeof(address), value, size);
+    if (address == 0)
+    {
+        return;
+    }
+
+    if (type == format::ResourceValueType::kBufferDeviceAddress)
+    {
+        size_t      offset      = 0;
+        const auto* buffer_info = address_tracker.GetBufferByCaptureDeviceAddress(address, &offset);
+        if ((buffer_info == nullptr) || (buffer_info->replay_address == 0))
+        {
+            return;
+        }
+        address = buffer_info->replay_address + offset;
+    }
+    else if (type == format::ResourceValueType::kAccelerationStructureAddress)
+    {
+        const auto& address_map = address_tracker.GetAccelerationStructureDeviceAddressMap();
+        const auto  entry       = address_map.find(address);
+        if (entry == address_map.end())
+        {
+            return;
+        }
+        address = entry->second;
+    }
+
+    util::platform::MemoryCopy(value, size, &address, sizeof(address));
+}
+
 GFXRECON_END_NAMESPACE(decode)
 GFXRECON_END_NAMESPACE(gfxrecon)

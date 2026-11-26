@@ -27,6 +27,8 @@
 #include "decode/block_buffer.h"
 #include "decode/block_parser.h"
 #include "decode/fill_memory_2_patch.h"
+#include "decode/vulkan_device_address_tracker.h"
+#include "decode/vulkan_object_info_table.h"
 #include "format/format.h"
 #include "format/format_util.h"
 #include "generated/generated_vulkan_consumer.h"
@@ -492,4 +494,78 @@ TEST_CASE("PatchFillMemoryRecords skips values outside the records", "[fill_memo
         INFO("record " << i);
         REQUIRE(std::equal(records[i].data, records[i].data + records[i].size, expected[i].begin()));
     }
+}
+
+TEST_CASE("MapVulkanResourceValue maps capture addresses to replay addresses", "[fill_memory_2]")
+{
+    constexpr VkDeviceAddress kBufferCapture = 0x10000;
+    constexpr VkDeviceAddress kBufferReplay  = 0x90000;
+    constexpr VkDeviceSize    kBufferSize    = 0x100;
+    constexpr VkDeviceAddress kASCapture     = 0x20000;
+    constexpr VkDeviceAddress kASReplay      = 0xa0000;
+
+    decode::VulkanObjectInfoTable      object_info_table;
+    decode::VulkanDeviceAddressTracker address_tracker(object_info_table);
+
+    decode::VulkanBufferInfo buffer_info;
+    buffer_info.handle          = reinterpret_cast<VkBuffer>(uint64_t{ 1 }); // the table drops null handles
+    buffer_info.capture_id      = 1;
+    buffer_info.capture_address = kBufferCapture;
+    buffer_info.replay_address  = kBufferReplay;
+    buffer_info.size            = kBufferSize;
+    object_info_table.AddVkBufferInfo(std::move(buffer_info));
+    REQUIRE(object_info_table.GetVkBufferInfo(1) != nullptr);
+    address_tracker.TrackBuffer(object_info_table.GetVkBufferInfo(1));
+
+    decode::VulkanAccelerationStructureKHRInfo as_info;
+    as_info.handle          = reinterpret_cast<VkAccelerationStructureKHR>(uint64_t{ 2 });
+    as_info.capture_id      = 2;
+    as_info.capture_address = kASCapture;
+    as_info.replay_address  = kASReplay;
+    object_info_table.AddVkAccelerationStructureKHRInfo(std::move(as_info));
+    REQUIRE(object_info_table.GetVkAccelerationStructureKHRInfo(2) != nullptr);
+    address_tracker.TrackAccelerationStructure(object_info_table.GetVkAccelerationStructureKHRInfo(2));
+
+    using Type = format::ResourceValueType;
+    struct Case
+    {
+        Type            type;
+        VkDeviceAddress input;
+        VkDeviceAddress expected;
+    };
+    const std::vector<Case> cases = {
+        { Type::kBufferDeviceAddress, kBufferCapture, kBufferReplay },                              // buffer start
+        { Type::kBufferDeviceAddress, kBufferCapture + 0x48, kBufferReplay + 0x48 },                // inside the buffer
+        { Type::kBufferDeviceAddress, kBufferCapture + kBufferSize, kBufferCapture + kBufferSize }, // one past the end
+        { Type::kBufferDeviceAddress, 0, 0 },                                                       // null
+        { Type::kAccelerationStructureAddress, kASCapture, kASReplay },                             // known AS
+        { Type::kAccelerationStructureAddress, kASCapture + 8, kASCapture + 8 },                    // not an AS start
+    };
+
+    // One record holds all values, so the test also runs them through PatchFillMemoryRecords.
+    std::vector<uint8_t>                         data(cases.size() * sizeof(VkDeviceAddress));
+    std::vector<decode::FillMemoryResourceValue> values;
+    for (size_t i = 0; i < cases.size(); ++i)
+    {
+        std::memcpy(data.data() + i * sizeof(VkDeviceAddress), &cases[i].input, sizeof(VkDeviceAddress));
+        values.push_back({ cases[i].type, i * sizeof(VkDeviceAddress) });
+    }
+
+    std::vector<decode::FillMemoryRecord> records = { { 0, data.size(), data.data() } };
+    std::vector<uint8_t>                  storage;
+    auto map_value = [&address_tracker](format::ResourceValueType type, uint8_t* value, uint32_t size) {
+        decode::MapVulkanResourceValue(address_tracker, type, value, size);
+    };
+    REQUIRE(decode::PatchFillMemoryRecords(values, decode::GetVulkanResourceValueSize, map_value, &storage, &records));
+
+    for (size_t i = 0; i < cases.size(); ++i)
+    {
+        INFO("case " << i);
+        VkDeviceAddress result = 0;
+        std::memcpy(&result, records[0].data + i * sizeof(VkDeviceAddress), sizeof(result));
+        REQUIRE(result == cases[i].expected);
+    }
+
+    // A fill does not name the pipeline whose map holds its group handles.
+    REQUIRE(decode::GetVulkanResourceValueSize(Type::kShaderGroupHandle) == 0);
 }
