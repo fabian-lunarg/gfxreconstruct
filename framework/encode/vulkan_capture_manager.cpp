@@ -3447,26 +3447,6 @@ void VulkanCaptureManager::PreProcess_vkQueueSubmit2(
 void VulkanCaptureManager::WritePageGuardFillMemoryCmds(util::PageGuardManager*         manager,
                                                         std::optional<format::HandleId> memory_id)
 {
-    // TODO(prototype): temporary A/B switch, remove before upstreaming.
-    static const bool use_fill_memory_2 = (util::platform::GetEnv("GFXRECON_PROTOTYPE_FILL_MEMORY_2") == "1");
-
-    if (!use_fill_memory_2)
-    {
-        auto handle_modified = [this](uint64_t id, void* start_address, size_t offset, size_t size) {
-            WriteFillMemoryCmd(id, offset, size, start_address);
-        };
-
-        if (memory_id)
-        {
-            manager->ProcessMemoryEntry(*memory_id, handle_modified);
-        }
-        else
-        {
-            manager->ProcessMemoryEntries(handle_modified);
-        }
-        return;
-    }
-
     // Each range is copied inside its callback, while the page guard keeps it readable and blocks writes to it.
     // The end callback must not read the ranges, since they are guarded again by then.
     std::vector<uint8_t> payload;
