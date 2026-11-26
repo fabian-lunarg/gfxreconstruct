@@ -96,6 +96,36 @@ void VulkanDecoderBase::DispatchFillMemoryCommand(
     }
 }
 
+// Reads kResourceValues modifier data: uint32_t count, count types, count offsets. The size must match exactly.
+static bool
+ReadFillMemoryResourceValues(const uint8_t* data, uint64_t size, std::vector<FillMemoryResourceValue>* values)
+{
+    uint32_t count = 0;
+    if (size < sizeof(count))
+    {
+        return false;
+    }
+    util::platform::MemoryCopy(&count, sizeof(count), data, sizeof(count));
+
+    const uint64_t value_size = sizeof(format::ResourceValueType) + sizeof(uint64_t);
+    if (size != sizeof(count) + value_size * count)
+    {
+        return false;
+    }
+
+    const uint8_t* types   = data + sizeof(count);
+    const uint8_t* offsets = types + count * sizeof(format::ResourceValueType);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        FillMemoryResourceValue value{};
+        util::platform::MemoryCopy(&value.type, sizeof(value.type), types + i, sizeof(value.type));
+        util::platform::MemoryCopy(
+            &value.offset, sizeof(value.offset), offsets + i * sizeof(uint64_t), sizeof(value.offset));
+        values->push_back(value);
+    }
+    return true;
+}
+
 void VulkanDecoderBase::DispatchFillMemoryCommand2(const format::FillMemoryCommand2Header& command_header,
                                                    const uint8_t*                          data)
 {
@@ -132,15 +162,37 @@ void VulkanDecoderBase::DispatchFillMemoryCommand2(const format::FillMemoryComma
         return true;
     };
 
+    // Unknown modifiers are only collected here. Replay reports them, tools that ignore modifiers stay silent.
+    FillMemoryModifiers modifiers;
     for (uint32_t i = 0; i < command_header.modifier_count; ++i)
     {
         format::FillMemoryModifierHeader modifier_header{};
-        if (!read(&modifier_header, sizeof(modifier_header)) || !skip(modifier_header.size))
+        if (!read(&modifier_header, sizeof(modifier_header)))
         {
             GFXRECON_LOG_WARNING("Ignoring a truncated fill memory 2 meta-data block.");
             return;
         }
-        GFXRECON_LOG_WARNING_ONCE("Ignoring unknown fill memory 2 modifier %u.", modifier_header.modifier_id);
+
+        const uint8_t* modifier_data = data + offset;
+        if (!skip(modifier_header.size))
+        {
+            GFXRECON_LOG_WARNING("Ignoring a truncated fill memory 2 meta-data block.");
+            return;
+        }
+
+        switch (static_cast<format::FillMemoryModifierId>(modifier_header.modifier_id))
+        {
+            case format::FillMemoryModifierId::kResourceValues:
+                if (!ReadFillMemoryResourceValues(modifier_data, modifier_header.size, &modifiers.resource_values))
+                {
+                    GFXRECON_LOG_WARNING("Ignoring a fill memory 2 meta-data block with malformed resource values.");
+                    return;
+                }
+                break;
+            default:
+                modifiers.unknown_ids.push_back(modifier_header.modifier_id);
+                break;
+        }
     }
 
     // reserve from what the block can actually hold, not from a count a corrupt block controls
@@ -168,7 +220,7 @@ void VulkanDecoderBase::DispatchFillMemoryCommand2(const format::FillMemoryComma
 
     for (auto consumer : consumers_)
     {
-        consumer->ProcessFillMemoryCommand2(command_header.memory_id, records);
+        consumer->ProcessFillMemoryCommand2(command_header.memory_id, modifiers, records);
     }
 }
 

@@ -111,6 +111,10 @@ class VulkanReplayConsumerBase : public VulkanConsumer
     virtual void
     ProcessFillMemoryCommand(uint64_t memory_id, uint64_t offset, uint64_t size, const uint8_t* data) override;
 
+    virtual void ProcessFillMemoryCommand2(uint64_t                             memory_id,
+                                           const FillMemoryModifiers&           modifiers,
+                                           const std::vector<FillMemoryRecord>& records) override;
+
     virtual void ProcessResizeWindowCommand(format::HandleId surface_id, uint32_t width, uint32_t height) override;
 
     virtual void ProcessResizeWindowCommand2(format::HandleId surface_id,
@@ -2398,6 +2402,8 @@ class VulkanReplayConsumerBase : public VulkanConsumer
                               PreDestroyHook                                             pre_destroy_hook = nullptr);
 
   private:
+    std::unordered_set<uint32_t> reported_fill_memory_modifier_ids_; // Unknown modifier ids already logged.
+
     util::platform::LibraryHandle                                            loader_handle_;
     PFN_vkGetInstanceProcAddr                                                get_instance_proc_addr_;
     PFN_vkCreateInstance                                                     create_instance_proc_;

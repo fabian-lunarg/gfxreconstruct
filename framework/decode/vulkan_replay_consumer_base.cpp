@@ -686,6 +686,29 @@ void VulkanReplayConsumerBase::ProcessFillMemoryCommand(uint64_t       memory_id
     }
 }
 
+void VulkanReplayConsumerBase::ProcessFillMemoryCommand2(uint64_t                             memory_id,
+                                                         const FillMemoryModifiers&           modifiers,
+                                                         const std::vector<FillMemoryRecord>& records)
+{
+    // A capture from a newer build: fill without the modifier, as best effort.
+    for (uint32_t modifier_id : modifiers.unknown_ids)
+    {
+        if (reported_fill_memory_modifier_ids_.insert(modifier_id).second)
+        {
+            GFXRECON_LOG_ERROR("Unknown fill memory modifier %u, writing the memory without it. Replay may fail; use "
+                               "a newer replayer.",
+                               modifier_id);
+        }
+    }
+
+    if (!modifiers.resource_values.empty())
+    {
+        GFXRECON_LOG_ERROR_ONCE("Fill memory resource values are not mapped yet. Replay may fail.");
+    }
+
+    VulkanConsumer::ProcessFillMemoryCommand2(memory_id, modifiers, records);
+}
+
 void VulkanReplayConsumerBase::ProcessResizeWindowCommand(format::HandleId surface_id, uint32_t width, uint32_t height)
 {
     // We need to find the surface associated with this ID, and then lookup its window.

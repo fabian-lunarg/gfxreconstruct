@@ -26,12 +26,14 @@
 
 #include "decode/block_buffer.h"
 #include "decode/block_parser.h"
+#include "decode/fill_memory_2_patch.h"
 #include "format/format.h"
 #include "format/format_util.h"
 #include "generated/generated_vulkan_consumer.h"
 #include "generated/generated_vulkan_decoder.h"
 #include "util/compressor.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -61,6 +63,21 @@ class FillMemoryRecorder : public decode::VulkanConsumer
     std::vector<Fill> fills;
 };
 
+// Keeps what ProcessFillMemoryCommand2 receives, and lets the default split run too.
+class FillMemory2Recorder : public FillMemoryRecorder
+{
+  public:
+    void ProcessFillMemoryCommand2(uint64_t                                     memory_id,
+                                   const decode::FillMemoryModifiers&           modifiers,
+                                   const std::vector<decode::FillMemoryRecord>& records) override
+    {
+        received_modifiers.push_back(modifiers);
+        FillMemoryRecorder::ProcessFillMemoryCommand2(memory_id, modifiers, records);
+    }
+
+    std::vector<decode::FillMemoryModifiers> received_modifiers;
+};
+
 struct TestRecord
 {
     uint64_t             offset;
@@ -78,6 +95,28 @@ void Append(std::vector<uint8_t>* bytes, const T& value)
 {
     const auto* first = reinterpret_cast<const uint8_t*>(&value);
     bytes->insert(bytes->end(), first, first + sizeof(T));
+}
+
+struct TestResourceValue
+{
+    format::ResourceValueType type;
+    uint64_t                  offset;
+};
+
+// kResourceValues modifier data: count, then all types, then all offsets.
+TestModifier MakeResourceValuesModifier(const std::vector<TestResourceValue>& values)
+{
+    TestModifier modifier{ static_cast<uint32_t>(format::FillMemoryModifierId::kResourceValues), {} };
+    Append(&modifier.data, static_cast<uint32_t>(values.size()));
+    for (const TestResourceValue& value : values)
+    {
+        Append(&modifier.data, value.type);
+    }
+    for (const TestResourceValue& value : values)
+    {
+        Append(&modifier.data, value.offset);
+    }
+    return modifier;
 }
 
 // Data that compresses well but differs per record and per byte position.
@@ -271,4 +310,186 @@ TEST_CASE("A truncated FillMemoryCommand2 block is dropped whole", "[fill_memory
     ParseAndDispatch(&parser, &decoder, &block);
 
     REQUIRE(recorder.fills.empty());
+}
+
+TEST_CASE("FillMemoryCommand2 modifiers reach the consumer, unknown ones are skipped by size", "[fill_memory_2]")
+{
+    // Three values, so a stride bug between the type and offset arrays shows.
+    const std::vector<TestResourceValue> values = { { format::ResourceValueType::kBufferDeviceAddress, 4100 },
+                                                    { format::ResourceValueType::kShaderGroupHandle, 16 },
+                                                    { format::ResourceValueType::kAccelerationStructureAddress,
+                                                      0x123456789a } };
+
+    // Unknown modifiers before and after the known one, with sizes that are not a multiple of 4 or 8.
+    const std::vector<TestModifier> modifiers = { { 0xffff0001, MakeData(5, 1) },
+                                                  MakeResourceValuesModifier(values),
+                                                  { 0xffff0002, MakeData(13, 2) } };
+    const std::vector<TestRecord>   records   = { { 0, MakeData(32, 20) }, { 512, MakeData(9, 40) } };
+
+    std::vector<uint8_t> block = WriteFillMemory2Block(7, modifiers, records, nullptr);
+
+    bool err_triggered = false;
+    auto err_handler   = [&err_triggered](decode::BlockIOError, const char*) { err_triggered = true; };
+
+    decode::BlockParser   parser(err_handler, nullptr);
+    decode::VulkanDecoder decoder;
+    FillMemory2Recorder   recorder;
+    decoder.AddConsumer(&recorder);
+
+    ParseAndDispatch(&parser, &decoder, &block);
+
+    REQUIRE_FALSE(err_triggered);
+    REQUIRE(recorder.received_modifiers.size() == 1);
+
+    const decode::FillMemoryModifiers& received = recorder.received_modifiers[0];
+    REQUIRE(received.unknown_ids == std::vector<uint32_t>{ 0xffff0001, 0xffff0002 });
+    REQUIRE(received.resource_values.size() == values.size());
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        REQUIRE(received.resource_values[i].type == values[i].type);
+        REQUIRE(received.resource_values[i].offset == values[i].offset);
+    }
+
+    REQUIRE(recorder.fills.size() == 2);
+    RequireFill(recorder.fills[0], 7, records[0]);
+    RequireFill(recorder.fills[1], 7, records[1]);
+}
+
+TEST_CASE("A FillMemoryCommand2 block with malformed resource values is dropped whole", "[fill_memory_2]")
+{
+    // The count claims one value more, or one less, than the data holds.
+    const uint8_t wrong_count = GENERATE(uint8_t{ 2 }, uint8_t{ 0 });
+    INFO("count " << static_cast<uint32_t>(wrong_count));
+
+    TestModifier modifier = MakeResourceValuesModifier({ { format::ResourceValueType::kBufferDeviceAddress, 0 } });
+    modifier.data[0]      = wrong_count;
+
+    const std::vector<TestRecord> records = { { 0, MakeData(32, 20) } };
+    std::vector<uint8_t>          block   = WriteFillMemory2Block(7, { modifier }, records, nullptr);
+
+    decode::BlockParser   parser([](decode::BlockIOError, const char*) {}, nullptr);
+    decode::VulkanDecoder decoder;
+    FillMemory2Recorder   recorder;
+    decoder.AddConsumer(&recorder);
+
+    ParseAndDispatch(&parser, &decoder, &block);
+
+    REQUIRE(recorder.received_modifiers.empty());
+    REQUIRE(recorder.fills.empty());
+}
+
+namespace
+{
+
+uint32_t TestValueSize(format::ResourceValueType type)
+{
+    switch (type)
+    {
+        case format::ResourceValueType::kBufferDeviceAddress:
+            return 8;
+        case format::ResourceValueType::kShaderGroupHandle:
+            return 32;
+        default:
+            return 0;
+    }
+}
+
+// Position dependent, and an address add carries across bytes, so a gather or scatter at the wrong place shows.
+void TestMapValue(format::ResourceValueType type, uint8_t* value, uint32_t size)
+{
+    if (type == format::ResourceValueType::kBufferDeviceAddress)
+    {
+        uint64_t address = 0;
+        std::memcpy(&address, value, sizeof(address));
+        address += 0x0102030405060708ull;
+        std::memcpy(value, &address, sizeof(address));
+    }
+    else
+    {
+        std::reverse(value, value + size);
+    }
+}
+
+} // namespace
+
+TEST_CASE("PatchFillMemoryRecords maps values inside and across records", "[fill_memory_2]")
+{
+    // Records out of offset order, with a gap from 80 to 200.
+    const std::vector<TestRecord> test_records = { { 64, MakeData(16, 10) },
+                                                   { 0, MakeData(64, 30) },
+                                                   { 200, MakeData(8, 70) } };
+
+    const std::vector<decode::FillMemoryResourceValue> values = {
+        { format::ResourceValueType::kBufferDeviceAddress, 60 }, // spans the records at 0 and 64
+        { format::ResourceValueType::kShaderGroupHandle, 8 },    // inside the record at 0
+        { format::ResourceValueType::kBufferDeviceAddress, 200 } // exactly the record at 200
+    };
+
+    // The expected result, from a flat image of the memory.
+    std::vector<uint8_t> image(208, 0);
+    for (const TestRecord& record : test_records)
+    {
+        std::copy(record.data.begin(), record.data.end(), image.begin() + record.offset);
+    }
+    for (const auto& value : values)
+    {
+        TestMapValue(value.type, image.data() + value.offset, TestValueSize(value.type));
+    }
+
+    std::vector<decode::FillMemoryRecord> records;
+    for (const TestRecord& record : test_records)
+    {
+        records.push_back({ record.offset, record.data.size(), record.data.data() });
+    }
+
+    std::vector<uint8_t> storage;
+    REQUIRE(decode::PatchFillMemoryRecords(values, TestValueSize, TestMapValue, &storage, &records));
+
+    REQUIRE(records.size() == test_records.size());
+    for (size_t i = 0; i < records.size(); ++i)
+    {
+        INFO("record " << i);
+        const auto& record = records[i];
+        REQUIRE(record.offset == test_records[i].offset);
+        REQUIRE(record.data != test_records[i].data.data());
+        REQUIRE(std::equal(record.data, record.data + record.size, image.begin() + record.offset));
+    }
+}
+
+TEST_CASE("PatchFillMemoryRecords skips values outside the records", "[fill_memory_2]")
+{
+    // A gap from 80 to 88.
+    const std::vector<TestRecord> test_records = { { 64, MakeData(16, 10) },
+                                                   { 0, MakeData(64, 30) },
+                                                   { 88, MakeData(16, 50) } };
+
+    const auto skipped =
+        GENERATE(decode::FillMemoryResourceValue{ format::ResourceValueType::kBufferDeviceAddress, 76 },  // half inside
+                 decode::FillMemoryResourceValue{ format::ResourceValueType::kShaderGroupHandle, 60 },    // gap inside
+                 decode::FillMemoryResourceValue{ format::ResourceValueType::kBufferDeviceAddress, 300 }, // outside
+                 decode::FillMemoryResourceValue{ format::ResourceValueType::kGpuVirtualAddress, 0 });    // no size
+    INFO("offset " << skipped.offset);
+
+    // One value that maps, so the result shows the skip did not stop the others.
+    const std::vector<decode::FillMemoryResourceValue> values = {
+        skipped, { format::ResourceValueType::kBufferDeviceAddress, 8 }
+    };
+
+    std::vector<decode::FillMemoryRecord> records;
+    for (const TestRecord& record : test_records)
+    {
+        records.push_back({ record.offset, record.data.size(), record.data.data() });
+    }
+
+    std::vector<uint8_t> storage;
+    REQUIRE_FALSE(decode::PatchFillMemoryRecords(values, TestValueSize, TestMapValue, &storage, &records));
+
+    std::vector<std::vector<uint8_t>> expected = { test_records[0].data, test_records[1].data, test_records[2].data };
+    TestMapValue(format::ResourceValueType::kBufferDeviceAddress, expected[1].data() + 8, 8);
+
+    for (size_t i = 0; i < records.size(); ++i)
+    {
+        INFO("record " << i);
+        REQUIRE(std::equal(records[i].data, records[i].data + records[i].size, expected[i].begin()));
+    }
 }

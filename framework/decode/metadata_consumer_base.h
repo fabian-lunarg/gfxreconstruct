@@ -41,6 +41,20 @@ struct FillMemoryRecord
     const uint8_t* data;
 };
 
+/// @brief One value of a FillMemoryCommand2 block that replay must map.
+struct FillMemoryResourceValue
+{
+    format::ResourceValueType type;
+    uint64_t                  offset; // Offset from the start of the mapped pointer.
+};
+
+/// @brief The modifiers of one FillMemoryCommand2 block.
+struct FillMemoryModifiers
+{
+    std::vector<FillMemoryResourceValue> resource_values;
+    std::vector<uint32_t>                unknown_ids; // Modifiers this build does not know, skipped by size.
+};
+
 /// @brief Base class defining the virtual functions that consumers need to
 /// implement to handle metacommands.
 class MetadataConsumerBase
@@ -51,14 +65,20 @@ class MetadataConsumerBase
     virtual void ProcessDisplayMessageCommand(const std::string& message) {}
     virtual void ProcessFillMemoryCommand(uint64_t memory_id, uint64_t offset, uint64_t size, const uint8_t* data) {}
 
-    // The default hands each record to ProcessFillMemoryCommand, so consumers that only know that work unchanged.
-    virtual void ProcessFillMemoryCommand2(uint64_t memory_id, const std::vector<FillMemoryRecord>& records)
+    // The default ignores the modifiers and hands each record to ProcessFillMemoryCommand, so consumers that only know
+    // that work unchanged.
+    virtual void ProcessFillMemoryCommand2(uint64_t                             memory_id,
+                                           const FillMemoryModifiers&           modifiers,
+                                           const std::vector<FillMemoryRecord>& records)
     {
+        GFXRECON_UNREFERENCED_PARAMETER(modifiers);
+
         for (const FillMemoryRecord& record : records)
         {
             ProcessFillMemoryCommand(memory_id, record.offset, record.size, record.data);
         }
     }
+
     virtual void
     ProcessFillMemoryResourceValueCommand(const format::FillMemoryResourceValueCommandHeader& command_header,
                                           const uint8_t*                                      data)

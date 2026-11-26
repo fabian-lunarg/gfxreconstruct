@@ -288,6 +288,16 @@ enum class ResourceValueType : uint8_t
     kIndirectArgumentDispatchRays  = 4,
     kExecuteIndirectCountBuffer    = 5,
     kRaytracingInstanceDescPointer = 6,
+    kBufferDeviceAddress           = 7,
+    kAccelerationStructureAddress  = 8,
+    kShaderGroupHandle             = 9,
+};
+
+// Ids of the modifiers in a FillMemoryCommand2 block. A new id is not a layout change.
+enum class FillMemoryModifierId : uint32_t
+{
+    kUnknown        = 0,
+    kResourceValues = 1,
 };
 
 #pragma pack(push)
@@ -397,9 +407,12 @@ struct FillMemoryCommand2Header
     uint64_t         payload_size; // Uncompressed size of the payload after this header.
 };
 
+// Modifier data for FillMemoryModifierId::kResourceValues, the same layout as the FillMemoryResourceValueCommand body:
+//   uint32_t count, count x ResourceValueType, count x uint64_t offset from the start of the mapped pointer.
+// Each value must lie fully inside the records of the block, but may span records.
 struct FillMemoryModifierHeader
 {
-    uint32_t modifier_id; // Identifies the modifier.
+    uint32_t modifier_id; // FillMemoryModifierId.
     uint64_t size;        // Size of the modifier data after this header.
 };
 
