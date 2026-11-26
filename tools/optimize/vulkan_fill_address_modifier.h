@@ -37,11 +37,49 @@
 GFXRECON_BEGIN_NAMESPACE(gfxrecon)
 
 /**
+ * @brief   The block that last wrote each byte of one device memory, by offset from the start of the memory.
+ */
+class FillWriterMap
+{
+  public:
+    struct Writer
+    {
+        uint64_t block_index{ 0 };
+        bool     is_fill2{ false }; ///< false for a FillMemoryCommand.
+        uint64_t map_offset{ 0 };   ///< Map offset when the block was written, to turn memory offsets into mapped ones.
+
+        bool operator==(const Writer& other) const = default;
+    };
+
+    enum class Coverage
+    {
+        kOneBlock,
+        kSeveralBlocks,
+        kNotWritten ///< At least one byte no block wrote.
+    };
+
+    /// Records that writer wrote [begin, end). Later writes replace earlier ones.
+    void Write(uint64_t begin, uint64_t end, const Writer& writer);
+
+    /// Which blocks last wrote [begin, end). Sets writer only for kOneBlock.
+    Coverage Find(uint64_t begin, uint64_t end, Writer* writer) const;
+
+  private:
+    struct Piece
+    {
+        uint64_t end{ 0 };
+        Writer   writer;
+    };
+
+    std::map<uint64_t, Piece> pieces_; ///< By begin. Pieces do not overlap.
+};
+
+/**
  * @brief   Finds the device addresses in fill memory data, from the shaders that read them.
  *
  * The scan pass follows pipelines, descriptor sets, buffer binds and command buffers. At each submit
  * it turns the pointer fields that SPIR-V reflection reports in bound uniform and storage buffers
- * into locations in device memory.
+ * into locations in device memory, and gives each location to the fill block that last wrote it.
  *
  * Scope: single pointers in buffer descriptors. Chains, pointer arrays, push constants, inline
  * uniform blocks, shader binding tables and descriptor buffers are not followed.
@@ -53,6 +91,19 @@ class VulkanFillAddressModifier : public VulkanModifierBase
     using Location = std::pair<format::HandleId, uint64_t>;
 
     bool CanOptimize() override;
+
+    void ProcessFillMemoryCommand(uint64_t memory_id, uint64_t offset, uint64_t size, const uint8_t* data) override;
+    void ProcessFillMemoryCommand2(uint64_t                                     memory_id,
+                                   const decode::FillMemoryModifiers&           modifiers,
+                                   const std::vector<decode::FillMemoryRecord>& records) override;
+
+    void Process_vkFreeMemory(const decode::ApiCallInfo& call_info, decode::args::FreeMemory& args) override;
+    void Process_vkGetBufferDeviceAddress(const decode::ApiCallInfo&            call_info,
+                                          decode::args::GetBufferDeviceAddress& args) override;
+    void Process_vkGetBufferDeviceAddressKHR(const decode::ApiCallInfo&               call_info,
+                                             decode::args::GetBufferDeviceAddressKHR& args) override;
+    void Process_vkGetBufferDeviceAddressEXT(const decode::ApiCallInfo&               call_info,
+                                             decode::args::GetBufferDeviceAddressEXT& args) override;
 
     void Process_vkCreateBuffer(const decode::ApiCallInfo& call_info, decode::args::CreateBuffer& args) override;
     void Process_vkBindBufferMemory(const decode::ApiCallInfo&      call_info,
@@ -234,8 +285,13 @@ class VulkanFillAddressModifier : public VulkanModifierBase
     void RecordSubmit2(Args& args);
     template <typename Args>
     void RecordPipelines(Args& args);
+    template <typename Args>
+    void RecordDeviceAddress(Args& args);
 
     void RecordMap(format::HandleId memory_id, uint64_t offset);
+    void RecordFill(format::HandleId memory_id, uint64_t offset, uint64_t size, const uint8_t* data, bool is_fill2);
+    void AssignWriter(const Location& location);
+    void CountValue(const Location& location);
     void AddStageReferences(format::HandleId                                       pipeline_id,
                             const decode::Decoded_VkPipelineShaderStageCreateInfo& stage_meta,
                             const VkPipelineShaderStageCreateInfo&                 stage);
@@ -261,6 +317,16 @@ class VulkanFillAddressModifier : public VulkanModifierBase
 
     /// Pointer locations read by submitted work, with the number of submits that read each.
     std::map<Location, uint64_t> locations_;
+
+    std::unordered_map<format::HandleId, FillWriterMap>        writers_;
+    std::unordered_map<format::HandleId, std::vector<uint8_t>> fill_data_; ///< Last fill data, by memory offset.
+    std::map<VkDeviceAddress, VkDeviceAddress> capture_addresses_;         ///< Buffer address ranges, begin to end.
+
+    /// Pointer locations per FillMemoryCommand2 block, as offsets from the mapped pointer.
+    std::map<uint64_t, std::set<uint64_t>> block_values_;
+
+    std::map<std::string, uint64_t> location_reads_; ///< Locations read at submit, by who last wrote them.
+    std::map<std::string, uint64_t> values_;         ///< Values at the locations given to a block, by kind.
 
     uint64_t                        submitted_uses_{ 0 };
     std::map<std::string, uint64_t> skipped_;            ///< Pointer fields not turned into a location, by reason.

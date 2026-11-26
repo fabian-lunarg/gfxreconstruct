@@ -25,7 +25,9 @@
 #include "decode/vulkan_pnext_node.h"
 #include "graphics/vulkan_struct_get_pnext.h"
 #include "util/logging.h"
+#include "util/platform.h"
 
+#include <algorithm>
 #include <iterator>
 
 GFXRECON_BEGIN_NAMESPACE(gfxrecon)
@@ -76,6 +78,72 @@ bool NormalizeBinding(const Layout& layout, uint32_t* binding, uint32_t* element
 
 } // namespace
 
+void FillWriterMap::Write(uint64_t begin, uint64_t end, const Writer& writer)
+{
+    if (begin >= end)
+    {
+        return;
+    }
+
+    // Start at the piece that holds begin, if any.
+    auto piece = pieces_.upper_bound(begin);
+    if ((piece != pieces_.begin()) && (std::prev(piece)->second.end > begin))
+    {
+        --piece;
+    }
+
+    // Cut out [begin, end), keeping the parts of each piece outside it.
+    while ((piece != pieces_.end()) && (piece->first < end))
+    {
+        const uint64_t piece_begin = piece->first;
+        const Piece    old         = piece->second;
+        piece                      = pieces_.erase(piece);
+        if (piece_begin < begin)
+        {
+            pieces_[piece_begin] = { begin, old.writer };
+        }
+        if (old.end > end)
+        {
+            pieces_[end] = { old.end, old.writer };
+        }
+    }
+    pieces_[begin] = { end, writer };
+}
+
+FillWriterMap::Coverage FillWriterMap::Find(uint64_t begin, uint64_t end, Writer* writer) const
+{
+    auto piece = pieces_.upper_bound(begin);
+    if (piece == pieces_.begin())
+    {
+        return Coverage::kNotWritten;
+    }
+    --piece;
+
+    const Writer first     = piece->second.writer;
+    bool         one_block = true;
+    uint64_t     covered   = begin;
+    for (; (piece != pieces_.end()) && (covered < end); ++piece)
+    {
+        if ((piece->first > covered) || (piece->second.end <= covered))
+        {
+            return Coverage::kNotWritten;
+        }
+        one_block = one_block && (piece->second.writer == first);
+        covered   = piece->second.end;
+    }
+
+    if (covered < end)
+    {
+        return Coverage::kNotWritten;
+    }
+    if (!one_block)
+    {
+        return Coverage::kSeveralBlocks;
+    }
+    *writer = first;
+    return Coverage::kOneBlock;
+}
+
 bool VulkanFillAddressModifier::CanOptimize()
 {
     std::map<format::HandleId, uint64_t> per_memory;
@@ -100,9 +168,114 @@ bool VulkanFillAddressModifier::CanOptimize()
     {
         GFXRECON_LOG_INFO("Fill address scan: %" PRIu64 " calls to %s not followed", count, call.c_str());
     }
+    for (const auto& [writer, count] : location_reads_)
+    {
+        GFXRECON_LOG_INFO("Fill address scan: %" PRIu64 " location reads at submit %s", count, writer.c_str());
+    }
+
+    size_t value_count = 0;
+    for (const auto& [block_index, offsets] : block_values_)
+    {
+        value_count += offsets.size();
+    }
+    GFXRECON_LOG_INFO(
+        "Fill address scan: %zu values in %zu FillMemoryCommand2 blocks.", value_count, block_values_.size());
+    for (const auto& [kind, count] : values_)
+    {
+        GFXRECON_LOG_INFO("Fill address scan:   %" PRIu64 " values are %s", count, kind.c_str());
+    }
 
     // The write pass does not exist yet.
     return false;
+}
+
+void VulkanFillAddressModifier::RecordFill(
+    format::HandleId memory_id, uint64_t offset, uint64_t size, const uint8_t* data, bool is_fill2)
+{
+    if (IsModificationPass())
+    {
+        return;
+    }
+
+    // Fill offsets are from the mapped pointer. Locations are from the start of the memory.
+    const auto     map_offset = map_offsets_.find(memory_id);
+    const uint64_t base       = (map_offset != map_offsets_.end()) ? map_offset->second : 0;
+    const uint64_t begin      = base + offset;
+    writers_[memory_id].Write(begin, begin + size, { block_index_, is_fill2, base });
+
+    auto& bytes = fill_data_[memory_id];
+    if (bytes.size() < begin + size)
+    {
+        bytes.resize(static_cast<size_t>(begin + size));
+    }
+    util::platform::MemoryCopy(bytes.data() + begin, static_cast<size_t>(size), data, static_cast<size_t>(size));
+}
+
+void VulkanFillAddressModifier::ProcessFillMemoryCommand(uint64_t       memory_id,
+                                                         uint64_t       offset,
+                                                         uint64_t       size,
+                                                         const uint8_t* data)
+{
+    RecordFill(memory_id, offset, size, data, false);
+}
+
+void VulkanFillAddressModifier::ProcessFillMemoryCommand2(uint64_t                                     memory_id,
+                                                          const decode::FillMemoryModifiers&           modifiers,
+                                                          const std::vector<decode::FillMemoryRecord>& records)
+{
+    GFXRECON_UNREFERENCED_PARAMETER(modifiers);
+    for (const auto& record : records)
+    {
+        RecordFill(memory_id, record.offset, record.size, record.data, true);
+    }
+}
+
+void VulkanFillAddressModifier::Process_vkFreeMemory(const decode::ApiCallInfo& call_info,
+                                                     decode::args::FreeMemory&  args)
+{
+    GFXRECON_UNREFERENCED_PARAMETER(call_info);
+    if (!IsModificationPass())
+    {
+        writers_.erase(args.memory);
+        fill_data_.erase(args.memory);
+        map_offsets_.erase(args.memory);
+    }
+}
+
+template <typename Args>
+void VulkanFillAddressModifier::RecordDeviceAddress(Args& args)
+{
+    if (IsModificationPass() || (args.result == 0) || args.pInfo.IsNull())
+    {
+        return;
+    }
+    const auto buffer = buffers_.find(args.pInfo.GetMetaStructPointer()->buffer);
+    if (buffer != buffers_.end())
+    {
+        auto& end = capture_addresses_[args.result];
+        end       = std::max(end, args.result + buffer->second.size);
+    }
+}
+
+void VulkanFillAddressModifier::Process_vkGetBufferDeviceAddress(const decode::ApiCallInfo&            call_info,
+                                                                 decode::args::GetBufferDeviceAddress& args)
+{
+    GFXRECON_UNREFERENCED_PARAMETER(call_info);
+    RecordDeviceAddress(args);
+}
+
+void VulkanFillAddressModifier::Process_vkGetBufferDeviceAddressKHR(const decode::ApiCallInfo&               call_info,
+                                                                    decode::args::GetBufferDeviceAddressKHR& args)
+{
+    GFXRECON_UNREFERENCED_PARAMETER(call_info);
+    RecordDeviceAddress(args);
+}
+
+void VulkanFillAddressModifier::Process_vkGetBufferDeviceAddressEXT(const decode::ApiCallInfo&               call_info,
+                                                                    decode::args::GetBufferDeviceAddressEXT& args)
+{
+    GFXRECON_UNREFERENCED_PARAMETER(call_info);
+    RecordDeviceAddress(args);
 }
 
 void VulkanFillAddressModifier::Process_vkCreateBuffer(const decode::ApiCallInfo&  call_info,
@@ -756,8 +929,66 @@ void VulkanFillAddressModifier::ResolveUse(const Use& use)
 
             const uint64_t offset =
                 buffer->second.memory_offset + descriptor.offset + dynamic_offset + reference.buffer_offset;
-            ++locations_[{ buffer->second.memory_id, offset }];
+            AssignWriter({ buffer->second.memory_id, offset });
         }
+    }
+}
+
+void VulkanFillAddressModifier::AssignWriter(const Location& location)
+{
+    ++locations_[location];
+
+    // The GPU reads the location at submit, so the last fill before the submit wrote the value.
+    FillWriterMap::Writer   writer;
+    FillWriterMap::Coverage coverage = FillWriterMap::Coverage::kNotWritten;
+    const auto              writers  = writers_.find(location.first);
+    if (writers != writers_.end())
+    {
+        coverage = writers->second.Find(location.second, location.second + sizeof(VkDeviceAddress), &writer);
+    }
+
+    if (coverage == FillWriterMap::Coverage::kNotWritten)
+    {
+        ++location_reads_["not written by a fill"];
+        return;
+    }
+    if (coverage == FillWriterMap::Coverage::kSeveralBlocks)
+    {
+        ++location_reads_["written by more than one block"];
+        return;
+    }
+    if (!writer.is_fill2)
+    {
+        ++location_reads_["written by a FillMemoryCommand"];
+        return;
+    }
+
+    ++location_reads_["written by one FillMemoryCommand2 block"];
+    if (block_values_[writer.block_index].insert(location.second - writer.map_offset).second)
+    {
+        CountValue(location);
+    }
+}
+
+void VulkanFillAddressModifier::CountValue(const Location& location)
+{
+    VkDeviceAddress value = 0;
+    util::platform::MemoryCopy(
+        &value, sizeof(value), fill_data_.at(location.first).data() + location.second, sizeof(value));
+
+    if (value == 0)
+    {
+        ++values_["null"];
+        return;
+    }
+    auto range = capture_addresses_.upper_bound(value);
+    if ((range != capture_addresses_.begin()) && (value < std::prev(range)->second))
+    {
+        ++values_["capture buffer addresses"];
+    }
+    else
+    {
+        ++values_["neither null nor a capture buffer address"];
     }
 }
 
